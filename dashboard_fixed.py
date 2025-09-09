@@ -1,9 +1,19 @@
+import json
+import os
+
+# Lê informações da última atualização
+try:
+    with open('last_update.json', 'r') as f:
+        update_info = json.load(f)
+    st.sidebar.info(f"🔄 Última atualização: {update_info['last_update'][:19]}")
+except:
+    st.sidebar.info("📊 Dados carregados")
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import date, timedelta, datetime
-import os
 import hashlib
 
 # Configuração da página
