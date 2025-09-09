@@ -1,0 +1,7 @@
+# Arquivo de usuários - Formato: usuario:senha_hash
+# Para gerar hash de senha, use: echo -n "sua_senha" | sha256sum
+admin:8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918
+lhg_user:ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f
+expedicao:a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3
+lucas.ramos:63de6b165af943a24dcdc7c9ad509c975bf8534a94211580cdfd5686bb4816de
+marcelo.silva:a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3

@@ -1,10 +1,10 @@
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 import os
+import hashlib
 
 # Configuração da página
 st.set_page_config(
@@ -18,9 +18,92 @@ st.set_page_config(
 PRIMARY_COLOR = "#FF6600"  # Laranja da logo
 SECONDARY_COLOR = "#808080" # Cinza da logo
 
+# Função para carregar usuários do arquivo users.txt
+def load_users():
+    users = {}
+    try:
+        if os.path.exists("users.txt"):
+            with open("users.txt", "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        parts = line.split(":")
+                        if len(parts) == 2:
+                            username, password_hash = parts
+                            users[username] = password_hash
+        else:
+            # Criar arquivo padrão se não existir
+            default_users = [
+                "# Arquivo de usuários - Formato: usuario:senha_hash",
+                "# Para gerar hash de senha, use: echo -n \"sua_senha\" | sha256sum",
+                "admin:5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
+                "lhg_user:ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f",
+                "expedicao:a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3"
+            ]
+            with open("users.txt", "w", encoding="utf-8") as f:
+                f.write("\n".join(default_users))
+            # Recarregar após criar o arquivo
+            return load_users()
+    except Exception as e:
+        st.error(f"Erro ao carregar usuários: {str(e)}")
+    
+    return users
+
+# Função para hash da senha
+def hash_password(password):
+    return hashlib.sha256(str.encode(password)).hexdigest()
+
+# Função para verificar login
+def check_password(username, password):
+    users = load_users()
+    if username in users:
+        return users[username] == hash_password(password)
+    return False
+
+# Função para registrar log de acesso em arquivo TXT
+def log_access(username, action="login"):
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        log_entry = f"{timestamp} | {username} | {action}\n"
+        
+        # Salvar no arquivo access_logs.txt
+        with open("access_logs.txt", "a", encoding="utf-8") as f:
+            f.write(log_entry)
+            
+    except Exception as e:
+        st.error(f"Erro ao registrar log: {str(e)}")
+
+# Função de login
+def login_form():
+    st.title("🔐 Login - Dashboard LHG Logística")
+    st.markdown("---")
+    
+    # Informações de login para teste
+    with st.expander("ℹ️ Credenciais de Teste"):
+        st.write("**Usuários disponíveis:**")
+        st.write("- **admin** / admin")
+    #    st.write("- **lhg_user** / lhg2025") 
+    #    st.write("- **expedicao** / hello")
+    
+    with st.form("login_form"):
+        username = st.text_input("Usuário")
+        password = st.text_input("Senha", type="password")
+        submit_button = st.form_submit_button("Entrar")
+        
+        if submit_button:
+            if check_password(username, password):
+                st.session_state.authenticated = True
+                st.session_state.username = username
+                log_access(username, "login")
+                st.success("Login realizado com sucesso!")
+                st.rerun()
+            else:
+                st.error("Usuário ou senha incorretos!")
+                log_access(username, "failed_login")
+
 # Função para carregar e processar os dados
 @st.cache_data(ttl=3600) # Cache por 1 hora
-def load_and_preprocess_data(file_path):
+def load_and_preprocess_data(file_path, start_date=None, end_date=None):
     try:
         df = pd.read_excel(file_path)
 
@@ -50,6 +133,11 @@ def load_and_preprocess_data(file_path):
         df['CustoTotalAbastecimento'] = pd.to_numeric(df['CustoTotalAbastecimento'], errors='coerce')
         df.dropna(subset=['ConsumoDiesel', 'CustoUnitario', 'CustoTotalAbastecimento'], inplace=True)
 
+        # Aplicar filtro de data se fornecido
+        if start_date and end_date:
+            df = df[(df['DataConsumo'] >= pd.to_datetime(start_date)) & 
+                   (df['DataConsumo'] <= pd.to_datetime(end_date))]
+
         # Calcular o consumo diário e custo diário por setor
         daily_data = df.groupby(['DataConsumo', 'Setor']).agg(
             ConsumoDiario=('ConsumoDiesel', 'sum'),
@@ -61,68 +149,80 @@ def load_and_preprocess_data(file_path):
         daily_data['ConsumoAcumulado'] = daily_data.groupby('Setor')['ConsumoDiario'].cumsum()
         daily_data['CustoAcumulado'] = daily_data.groupby('Setor')['CustoDiario'].cumsum()
 
-        return daily_data
+        return daily_data, df  # Retornar também os dados originais para o histograma
     except Exception as e:
         st.error(f"Erro ao carregar dados: {str(e)}")
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
 
 # Função para calcular KPIs
-def calculate_kpis(df):
+def calculate_kpis(df, period_type="month"):
     if df.empty:
         return {}
     
     try:
         today = pd.to_datetime(date.today())
         
-        # Filtrar dados do mês atual, excluindo o dia atual para cálculo de tendência e projeção
-        current_month_data_complete_days = df[(df['DataConsumo'].dt.month == today.month) & (df['DataConsumo'] < today)]
+        # Ajustar cálculo baseado no tipo de período
+        if period_type == "month":
+            # Filtrar dados do mês atual, excluindo o dia atual para cálculo de tendência e projeção
+            current_period_data_complete_days = df[(df['DataConsumo'].dt.month == today.month) & (df['DataConsumo'] < today)]
+        else:
+            # Para períodos personalizados, usar todos os dados exceto o último dia
+            unique_dates = sorted(df['DataConsumo'].unique())
+            if len(unique_dates) > 1:
+                current_period_data_complete_days = df[df['DataConsumo'] < unique_dates[-1]]
+            else:
+                current_period_data_complete_days = df
 
-        # Consumo acumulado do mês até hoje (considerando todos os dados disponíveis, incluindo o dia atual)
+        # Consumo acumulado do período
         total_consumed_expedicao = df[df['Setor'] == 'Expedição']['ConsumoDiario'].sum()
         total_consumed_peneiramento = df[df['Setor'] == 'Peneiramento']['ConsumoDiario'].sum()
-        total_consumed_month = total_consumed_expedicao + total_consumed_peneiramento
+        total_consumed_period = total_consumed_expedicao + total_consumed_peneiramento
 
-        # Custo total acumulado do mês até hoje
+        # Custo total acumulado do período
         total_cost_expedicao = df[df['Setor'] == 'Expedição']['CustoDiario'].sum()
         total_cost_peneiramento = df[df['Setor'] == 'Peneiramento']['CustoDiario'].sum()
-        total_cost_month = total_cost_expedicao + total_cost_peneiramento
+        total_cost_period = total_cost_expedicao + total_cost_peneiramento
 
         # Custo médio do litro de diesel (total de custo / total de consumo)
-        avg_liter_cost = total_cost_month / total_consumed_month if total_consumed_month > 0 else 0
+        avg_liter_cost = total_cost_period / total_consumed_period if total_consumed_period > 0 else 0
 
         # Consumo médio diário (para projeção, baseado em dias completos)
-        days_in_month_so_far = len(current_month_data_complete_days['DataConsumo'].unique())
-        avg_daily_consumption = current_month_data_complete_days['ConsumoDiario'].sum() / days_in_month_so_far if days_in_month_so_far > 0 else 0
+        days_in_period_so_far = len(current_period_data_complete_days['DataConsumo'].unique())
+        avg_daily_consumption = current_period_data_complete_days['ConsumoDiario'].sum() / days_in_period_so_far if days_in_period_so_far > 0 else 0
         
         # Custo médio diário (para projeção, baseado em dias completos)
-        avg_daily_cost = current_month_data_complete_days['CustoDiario'].sum() / days_in_month_so_far if days_in_month_so_far > 0 else 0
+        avg_daily_cost = current_period_data_complete_days['CustoDiario'].sum() / days_in_period_so_far if days_in_period_so_far > 0 else 0
 
-        # Estimativa de fechamento do mês
-        last_day_of_month = (pd.Timestamp(today.year, today.month, 1) + pd.DateOffset(months=1) - pd.DateOffset(days=1)).day
-        days_remaining_in_month = last_day_of_month - today.day
-        
-        projected_consumption = total_consumed_month + (avg_daily_consumption * days_remaining_in_month)
-        projected_cost = total_cost_month + (avg_daily_cost * days_remaining_in_month)
+        # Estimativa de fechamento (apenas para período mensal)
+        if period_type == "month":
+            last_day_of_month = (pd.Timestamp(today.year, today.month, 1) + pd.DateOffset(months=1) - pd.DateOffset(days=1)).day
+            days_remaining_in_month = last_day_of_month - today.day
+            projected_consumption = total_consumed_period + (avg_daily_consumption * days_remaining_in_month)
+            projected_cost = total_cost_period + (avg_daily_cost * days_remaining_in_month)
+        else:
+            projected_consumption = total_consumed_period
+            projected_cost = total_cost_period
 
         # Tendência do ritmo de abastecimento (baseado nos últimos 7 dias completos)
-        trend_data = current_month_data_complete_days.sort_values('DataConsumo').tail(7)
+        trend_data = current_period_data_complete_days.sort_values('DataConsumo').tail(7)
         trend = 'Não há dados suficientes'
-        if len(trend_data) >= 6: # Precisamos de pelo menos 6 dias para comparar 3 dias com os 3 anteriores
+        if len(trend_data) >= 6:
             avg_last_3_days = trend_data['ConsumoDiario'].tail(3).mean()
             avg_prev_3_days = trend_data['ConsumoDiario'].iloc[-6:-3].mean()
             
-            if avg_prev_3_days == 0: # Evitar divisão por zero
+            if avg_prev_3_days == 0:
                 trend = 'Estável (sem consumo anterior para comparação)'
-            elif avg_last_3_days > avg_prev_3_days * 1.05: # Aumento de 5%
+            elif avg_last_3_days > avg_prev_3_days * 1.05:
                 trend = 'Aumentando'
-            elif avg_last_3_days < avg_prev_3_days * 0.95: # Diminuição de 5%
+            elif avg_last_3_days < avg_prev_3_days * 0.95:
                 trend = 'Diminuindo'
             else:
                 trend = 'Estável'
-        elif len(current_month_data_complete_days['DataConsumo'].unique()) >= 2: # Se tiver pelo menos 2 dias completos
-            unique_dates = sorted(current_month_data_complete_days['DataConsumo'].unique())
-            last_day_consumption = current_month_data_complete_days[current_month_data_complete_days['DataConsumo'] == unique_dates[-1]]['ConsumoDiario'].sum()
-            second_last_day_consumption = current_month_data_complete_days[current_month_data_complete_days['DataConsumo'] == unique_dates[-2]]['ConsumoDiario'].sum()
+        elif len(current_period_data_complete_days['DataConsumo'].unique()) >= 2:
+            unique_dates = sorted(current_period_data_complete_days['DataConsumo'].unique())
+            last_day_consumption = current_period_data_complete_days[current_period_data_complete_days['DataConsumo'] == unique_dates[-1]]['ConsumoDiario'].sum()
+            second_last_day_consumption = current_period_data_complete_days[current_period_data_complete_days['DataConsumo'] == unique_dates[-2]]['ConsumoDiario'].sum()
             if last_day_consumption > second_last_day_consumption:
                 trend = 'Aumentando'
             elif last_day_consumption < second_last_day_consumption:
@@ -131,13 +231,13 @@ def calculate_kpis(df):
                 trend = 'Estável'
 
         return {
-            'total_consumed_month': total_consumed_month,
+            'total_consumed_period': total_consumed_period,
             'avg_daily_consumption': avg_daily_consumption,
             'projected_consumption': projected_consumption,
             'trend': trend,
             'total_consumed_expedicao': total_consumed_expedicao,
             'total_consumed_peneiramento': total_consumed_peneiramento,
-            'total_cost_month': total_cost_month,
+            'total_cost_period': total_cost_period,
             'avg_daily_cost': avg_daily_cost,
             'projected_cost': projected_cost,
             'avg_liter_cost': avg_liter_cost
@@ -147,7 +247,7 @@ def calculate_kpis(df):
         return {}
 
 # Função para gerar insights automáticos
-def generate_insights(kpis):
+def generate_insights(kpis, period_label="mês"):
     if not kpis:
         return ["Não foi possível gerar insights devido a problemas nos dados."]
     
@@ -156,15 +256,18 @@ def generate_insights(kpis):
     try:
         # Qual setor consome mais
         if kpis.get('total_consumed_expedicao', 0) > kpis.get('total_consumed_peneiramento', 0):
-            insights.append(f"O setor Expedição consome mais diesel, com {format_number(kpis['total_consumed_expedicao'])} litros acumulados no mês, comparado aos {format_number(kpis['total_consumed_peneiramento'])} litros do setor Peneiramento.")
+            insights.append(f"O setor Expedição consome mais diesel, com {format_number(kpis['total_consumed_expedicao'])} litros acumulados no {period_label}, comparado aos {format_number(kpis['total_consumed_peneiramento'])} litros do setor Peneiramento.")
         else:
-            insights.append(f"O setor Peneiramento consome mais diesel, com {format_number(kpis['total_consumed_peneiramento'])} litros acumulados no mês, comparado aos {format_number(kpis['total_consumed_expedicao'])} litros do setor Expedição.")
+            insights.append(f"O setor Peneiramento consome mais diesel, com {format_number(kpis['total_consumed_peneiramento'])} litros acumulados no {period_label}, comparado aos {format_number(kpis['total_consumed_expedicao'])} litros do setor Expedição.")
         
         # Ritmo atual de consumo
         insights.append(f"O ritmo atual de abastecimento está {kpis['trend'].lower()}, com uma média diária de {format_number(kpis['avg_daily_consumption'])} litros e um custo médio diário de R$ {format_number(kpis['avg_daily_cost'])}.")
         
         # Projeção de fechamento
-        insights.append(f"Com base no consumo atual, a projeção para o fechamento do mês é de {format_number(kpis['projected_consumption'])} litros de diesel, com um custo total estimado de R$ {format_number(kpis['projected_cost'])}.")
+        if period_label == "mês":
+            insights.append(f"Com base no consumo atual, a projeção para o fechamento do {period_label} é de {format_number(kpis['projected_consumption'])} litros de diesel, com um custo total estimado de R$ {format_number(kpis['projected_cost'])}.")
+        else:
+            insights.append(f"No período selecionado, o consumo total foi de {format_number(kpis['total_consumed_period'])} litros de diesel, com um custo total de R$ {format_number(kpis['total_cost_period'])}.")
         
     except Exception as e:
         insights.append(f"Erro ao gerar insights: {str(e)}")
@@ -175,18 +278,124 @@ def generate_insights(kpis):
 def format_number(value):
     return f"{int(value):,}".replace(",", ".")
 
+# Função para criar histograma de consumo por equipamento
+def create_equipment_histogram(df_original):
+    if df_original.empty or 'Tag' not in df_original.columns:
+        return None, None
+    
+    try:
+        # Agrupar por Tag e Setor para obter o consumo total por equipamento
+        equipment_data = df_original.groupby(['Tag', 'Setor'])['ConsumoDiesel'].sum().reset_index()
+        
+        # Separar por setor
+        expedicao_data = equipment_data[equipment_data['Setor'] == 'Expedição'].sort_values('ConsumoDiesel', ascending=True)
+        peneiramento_data = equipment_data[equipment_data['Setor'] == 'Peneiramento'].sort_values('ConsumoDiesel', ascending=True)
+        
+        # Criar gráfico para Expedição
+        fig_expedicao = None
+        if not expedicao_data.empty:
+            fig_expedicao = px.bar(
+                expedicao_data,
+                x='ConsumoDiesel',
+                y='Tag',
+                orientation='h',
+                title="Consumo por Equipamento - Expedição",
+                labels={'ConsumoDiesel': 'Consumo (Litros)', 'Tag': 'Equipamento'},
+                color_discrete_sequence=[PRIMARY_COLOR]
+            )
+            fig_expedicao.update_layout(height=400, showlegend=False)
+            fig_expedicao.update_traces(
+                texttemplate='%{x:,.0f}L',
+                textposition='outside'
+            )
+        
+        # Criar gráfico para Peneiramento
+        fig_peneiramento = None
+        if not peneiramento_data.empty:
+            fig_peneiramento = px.bar(
+                peneiramento_data,
+                x='ConsumoDiesel',
+                y='Tag',
+                orientation='h',
+                title="Consumo por Equipamento - Peneiramento",
+                labels={'ConsumoDiesel': 'Consumo (Litros)', 'Tag': 'Equipamento'},
+                color_discrete_sequence=[SECONDARY_COLOR]
+            )
+            fig_peneiramento.update_layout(height=400, showlegend=False)
+            fig_peneiramento.update_traces(
+                texttemplate='%{x:,.0f}L',
+                textposition='outside'
+            )
+        
+        return fig_expedicao, fig_peneiramento
+        
+    except Exception as e:
+        st.error(f"Erro ao criar histograma de equipamentos: {str(e)}")
+        return None, None
+
 # Interface principal
 def main():
+    # Verificar autenticação
+    if not st.session_state.get('authenticated', False):
+        login_form()
+        return
+    
     # Cabeçalho com logo e título
-    col1, col2 = st.columns([1, 4])
+    col1, col2, col3 = st.columns([1, 4, 1])
     with col1:
-        st.image("Lhg-02.png", width=150) # Caminho relativo para a logo
+        if os.path.exists("Lhg-02.png"):
+            st.image("Lhg-02.png", width=150)
+        else:
+            st.write("🏢 LHG")
     with col2:
         st.title("Dashboard de Consumo de Diesel")
         st.subheader("LHG Logística - Expedição (Expedição e Peneiramento)")
+    with col3:
+        if st.button("🚪 Logout"):
+            log_access(st.session_state.username, "logout")
+            st.session_state.authenticated = False
+            st.session_state.username = None
+            st.rerun()
 
     # Sidebar para configurações
     st.sidebar.header("📋 Configurações")
+    st.sidebar.info(f"Usuário: {st.session_state.get('username', 'Desconhecido')}")
+    
+    # Filtros de data na sidebar
+    st.sidebar.header("📅 Filtros de Data")
+    
+    filter_type = st.sidebar.selectbox(
+        "Tipo de Filtro",
+        ["Mês Atual", "Período Personalizado", "Mês Específico"]
+    )
+    
+    start_date = None
+    end_date = None
+    period_label = "mês"
+    period_type = "month"
+    
+    if filter_type == "Período Personalizado":
+        start_date = st.sidebar.date_input("Data Inicial", value=date(2025, 9, 1))
+        end_date = st.sidebar.date_input("Data Final", value=date.today())
+        period_label = f"período de {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}"
+        period_type = "custom"
+    elif filter_type == "Mês Específico":
+        selected_month = st.sidebar.selectbox("Selecione o Mês", 
+                                            ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+                                             "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"])
+        selected_year = st.sidebar.selectbox("Selecione o Ano", [2024, 2025, 2026])
+        
+        month_num = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+                     "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"].index(selected_month) + 1
+        
+        start_date = date(selected_year, month_num, 1)
+        if month_num == 12:
+            end_date = date(selected_year + 1, 1, 1) - timedelta(days=1)
+        else:
+            end_date = date(selected_year, month_num + 1, 1) - timedelta(days=1)
+        
+        period_label = f"{selected_month} de {selected_year}"
+        period_type = "custom"
     
     # Usar arquivo padrão (assumindo que está na mesma pasta)
     file_path = "Diesel-area.xlsx"
@@ -197,14 +406,14 @@ def main():
 
     # Carregar e processar dados
     with st.spinner("Carregando dados..."):
-        df = load_and_preprocess_data(file_path)
+        df, df_original = load_and_preprocess_data(file_path, start_date, end_date)
         
     if df.empty:
-        st.error("Não foi possível carregar os dados ou não há dados válidos após o processamento.")
+        st.error("Não foi possível carregar os dados ou não há dados válidos para o período selecionado.")
         return
         
-    kpis = calculate_kpis(df)
-    insights = generate_insights(kpis)
+    kpis = calculate_kpis(df, period_type)
+    insights = generate_insights(kpis, period_label)
     
     if not kpis:
         st.error("Não foi possível calcular os KPIs. Verifique os dados de entrada.")
@@ -227,8 +436,8 @@ def main():
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric(
-            label="Consumo Acumulado (Mês)",
-            value=f"{format_number(kpis['total_consumed_month'])} L"
+            label=f"Consumo Acumulado ({period_label.title()})",
+            value=f"{format_number(kpis['total_consumed_period'])} L"
         )
     with col2:
         st.metric(
@@ -236,17 +445,23 @@ def main():
             value=f"{format_number(kpis['avg_daily_consumption'])} L"
         )
     with col3:
-        st.metric(
-            label="Projeção Consumo Fechamento",
-            value=f"{format_number(kpis['projected_consumption'])} L"
-        )
+        if period_type == "month":
+            st.metric(
+                label="Projeção Consumo Fechamento",
+                value=f"{format_number(kpis['projected_consumption'])} L"
+            )
+        else:
+            st.metric(
+                label="Total do Período",
+                value=f"{format_number(kpis['total_consumed_period'])} L"
+            )
     
     # Segunda linha de KPIs (Custo)
     col4, col5, col6 = st.columns(3)
     with col4:
         st.metric(
-            label="Custo Total Acumulado (Mês)",
-            value=f"R$ {format_number(kpis['total_cost_month'])}"
+            label=f"Custo Total Acumulado ({period_label.title()})",
+            value=f"R$ {format_number(kpis['total_cost_period'])}"
         )
     with col5:
         st.metric(
@@ -254,10 +469,16 @@ def main():
             value=f"R$ {format_number(kpis['avg_daily_cost'])}"
         )
     with col6:
-        st.metric(
-            label="Projeção Custo Fechamento",
-            value=f"R$ {format_number(kpis['projected_cost'])}"
-        )
+        if period_type == "month":
+            st.metric(
+                label="Projeção Custo Fechamento",
+                value=f"R$ {format_number(kpis['projected_cost'])}"
+            )
+        else:
+            st.metric(
+                label="Custo Total do Período",
+                value=f"R$ {format_number(kpis['total_cost_period'])}"
+            )
     
     # Terceira linha de KPIs (Custo por Litro e Tendência)
     col7, col8 = st.columns(2)
@@ -318,6 +539,28 @@ def main():
         else:
             st.warning("Não há dados para exibir o gráfico de comparação de consumo.")
 
+    # Histogramas de consumo por equipamento
+    st.header("🚛 Consumo por Equipamento")
+    
+    if not df_original.empty:
+        fig_exp, fig_pen = create_equipment_histogram(df_original)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if fig_exp:
+                st.plotly_chart(fig_exp, use_container_width=True)
+            else:
+                st.warning("Não há dados de equipamentos para Expedição no período selecionado.")
+        
+        with col2:
+            if fig_pen:
+                st.plotly_chart(fig_pen, use_container_width=True)
+            else:
+                st.warning("Não há dados de equipamentos para Peneiramento no período selecionado.")
+    else:
+        st.warning("Não há dados para exibir o consumo por equipamento.")
+
     # Insights automáticos
     st.header("🔍 Insights Automáticos")
     for i, insight in enumerate(insights, 1):
@@ -338,5 +581,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
