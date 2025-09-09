@@ -1,5 +1,11 @@
 import json
 import os
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from datetime import date, timedelta, datetime
+import hashlib
 
 # Lê informações da última atualização
 try:
@@ -8,13 +14,6 @@ try:
     st.sidebar.info(f"🔄 Última atualização: {update_info['last_update'][:19]}")
 except:
     st.sidebar.info("📊 Dados carregados")
-
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from datetime import date, timedelta, datetime
-import hashlib
 
 # Configuração da página
 st.set_page_config(
