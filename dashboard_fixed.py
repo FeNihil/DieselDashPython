@@ -7,25 +7,15 @@ import plotly.graph_objects as go
 from datetime import date, timedelta, datetime
 import hashlib
 
-# Lê informações da última atualização
-try:
-    with open('last_update.json', 'r') as f:
-        update_info = json.load(f)
-    st.sidebar.info(f"🔄 Última atualização: {update_info['last_update'][:19]}")
-except:
-    st.sidebar.info("📊 Dados carregados")
-
-# Configuração da página
-st.set_page_config(
-    page_title="Dashboard de Consumo de Diesel - LHG Logística",
-    page_icon="⛽",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Cores da logo para estilização (laranja e cinza)
-PRIMARY_COLOR = "#FF6600"  # Laranja da logo
-SECONDARY_COLOR = "#808080" # Cinza da logo
+# --- Funções de Utilitário ---
+def get_last_update_info():
+    """Lê informações da última atualização do arquivo JSON"""
+    try:
+        with open('last_update.json', 'r') as f:
+            update_info = json.load(f)
+        return update_info
+    except:
+        return {"timestamp": 0, "last_update": "Não disponível"}
 
 # Função para carregar usuários do arquivo users.txt
 def load_users():
@@ -91,8 +81,6 @@ def login_form():
     with st.expander("ℹ️ Credenciais de Teste"):
         st.write("**Usuários disponíveis:**")
         st.write("- **admin** / admin")
-    #    st.write("- **lhg_user** / lhg2025") 
-    #    st.write("- **expedicao** / hello")
     
     with st.form("login_form"):
         username = st.text_input("Usuário")
@@ -110,9 +98,8 @@ def login_form():
                 st.error("Usuário ou senha incorretos!")
                 log_access(username, "failed_login")
 
-# Função para carregar e processar os dados
-@st.cache_data(ttl=3600) # Cache por 1 hora
-def load_and_preprocess_data(file_path, start_date=None, end_date=None):
+@st.cache_data
+def load_and_preprocess_data(file_path, start_date, end_date, cache_key):
     try:
         df = pd.read_excel(file_path)
 
@@ -158,7 +145,7 @@ def load_and_preprocess_data(file_path, start_date=None, end_date=None):
         daily_data['ConsumoAcumulado'] = daily_data.groupby('Setor')['ConsumoDiario'].cumsum()
         daily_data['CustoAcumulado'] = daily_data.groupby('Setor')['CustoDiario'].cumsum()
 
-        return daily_data, df  # Retornar também os dados originais para o histograma
+        return daily_data, df
     except Exception as e:
         st.error(f"Erro ao carregar dados: {str(e)}")
         return pd.DataFrame(), pd.DataFrame()
@@ -310,7 +297,7 @@ def create_equipment_histogram(df_original):
                 orientation='h',
                 title="Consumo por Equipamento - Expedição",
                 labels={'ConsumoDiesel': 'Consumo (Litros)', 'Tag': 'Equipamento'},
-                color_discrete_sequence=[PRIMARY_COLOR]
+                color_discrete_sequence=["#FF6600"]
             )
             fig_expedicao.update_layout(height=400, showlegend=False)
             fig_expedicao.update_traces(
@@ -328,7 +315,7 @@ def create_equipment_histogram(df_original):
                 orientation='h',
                 title="Consumo por Equipamento - Peneiramento",
                 labels={'ConsumoDiesel': 'Consumo (Litros)', 'Tag': 'Equipamento'},
-                color_discrete_sequence=[SECONDARY_COLOR]
+                color_discrete_sequence=["#808080"]
             )
             fig_peneiramento.update_layout(height=400, showlegend=False)
             fig_peneiramento.update_traces(
@@ -342,12 +329,26 @@ def create_equipment_histogram(df_original):
         st.error(f"Erro ao criar histograma de equipamentos: {str(e)}")
         return None, None
 
-# Interface principal
+# --- Configuração da Página ---
+st.set_page_config(
+    page_title="Dashboard de Consumo de Diesel - LHG Logística",
+    page_icon="⛽",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+PRIMARY_COLOR = "#FF6600"
+SECONDARY_COLOR = "#808080"
+
+# --- Interface Principal ---
 def main():
     # Verificar autenticação
     if not st.session_state.get('authenticated', False):
         login_form()
         return
+    
+    # Pega informações da última atualização
+    update_info = get_last_update_info()
     
     # Cabeçalho com logo e título
     col1, col2, col3 = st.columns([1, 4, 1])
@@ -369,7 +370,8 @@ def main():
     # Sidebar para configurações
     st.sidebar.header("📋 Configurações")
     st.sidebar.info(f"Usuário: {st.session_state.get('username', 'Desconhecido')}")
-    
+    st.sidebar.info(f"🔄 Última atualização: {update_info.get('last_update', 'N/A')[:19]}")
+
     # Filtros de data na sidebar
     st.sidebar.header("📅 Filtros de Data")
     
@@ -384,7 +386,7 @@ def main():
     period_type = "month"
     
     if filter_type == "Período Personalizado":
-        start_date = st.sidebar.date_input("Data Inicial", value=date(2025, 9, 1))
+        start_date = st.sidebar.date_input("Data Inicial", value=date.today() - timedelta(days=30))
         end_date = st.sidebar.date_input("Data Final", value=date.today())
         period_label = f"período de {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}"
         period_type = "custom"
@@ -392,7 +394,7 @@ def main():
         selected_month = st.sidebar.selectbox("Selecione o Mês", 
                                             ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
                                              "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"])
-        selected_year = st.sidebar.selectbox("Selecione o Ano", [2024, 2025, 2026])
+        selected_year = st.sidebar.selectbox("Selecione o Ano", [datetime.now().year, datetime.now().year - 1, datetime.now().year - 2])
         
         month_num = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
                      "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"].index(selected_month) + 1
@@ -406,16 +408,17 @@ def main():
         period_label = f"{selected_month} de {selected_year}"
         period_type = "custom"
     
-    # Usar arquivo padrão (assumindo que está na mesma pasta)
     file_path = "Diesel-area.xlsx"
     
     if not os.path.exists(file_path):
         st.error("Arquivo de dados não encontrado! Certifique-se de que 'Diesel-area.xlsx' está na mesma pasta que o script.")
         return
 
-    # Carregar e processar dados
+    # Usar o timestamp do JSON como cache_key
+    cache_key = update_info.get('timestamp', 0)
+    
     with st.spinner("Carregando dados..."):
-        df, df_original = load_and_preprocess_data(file_path, start_date, end_date)
+        df, df_original = load_and_preprocess_data(file_path, start_date, end_date, cache_key=cache_key)
         
     if df.empty:
         st.error("Não foi possível carregar os dados ou não há dados válidos para o período selecionado.")
@@ -581,12 +584,17 @@ def main():
         st.dataframe(df, use_container_width=True)
     else:
         st.warning("Não há dados para exibir.")
-
+        
     # Informações adicionais na sidebar
     st.sidebar.header("ℹ️ Informações")
     st.sidebar.info(f"Total de registros: {len(df)}")
     if not df.empty:
         st.sidebar.info(f"Período: {df['DataConsumo'].min().strftime('%d/%m/%Y')} a {df['DataConsumo'].max().strftime('%d/%m/%Y')}")
+
+    # Adiciona botão na sidebar para forçar refresh manual e clear cache
+    if st.sidebar.button("🔄 Forçar Atualização"):
+        st.cache_data.clear()
+        st.rerun()
 
 if __name__ == "__main__":
     main()
