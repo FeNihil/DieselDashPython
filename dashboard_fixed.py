@@ -6,6 +6,58 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import date, timedelta, datetime
 import hashlib
+import base64
+from cryptography.fernet import Fernet
+import io
+
+# --- Configurações de Criptografia ---
+# A chave de criptografia foi mascarada no código.
+# Para usá-la, uma letra ou número é alterado e corrigido antes do uso.
+# A chave original em formato hexadecimal é: e44591879052d99a7509f498e6e65985123b34c9b69ff6eafacb9b05f9deb1eb
+# A letra 'z' na string abaixo substitui o primeiro '9' da chave original.
+MASKED_KEY_STRING = "e445z1879052d99a7509f498e6e65985123b34c9b69ff6eafacb9b05f9deb1eb"
+ENCRYPTED_FILENAME = "Diesel-area.encrypted"
+
+# Restaura a chave original substituindo o caractere mascarado.
+# Atenção: Esta técnica não é totalmente segura para ambientes de produção.
+HEX_KEY_STRING = MASKED_KEY_STRING.replace('z', '9', 1)
+
+fernet = None
+if HEX_KEY_STRING:
+    try:
+        # Converte a string hexadecimal em bytes
+        key_bytes = bytes.fromhex(HEX_KEY_STRING)
+        # Codifica os bytes em base64 URL-safe, formato exigido pelo Fernet
+        ENCRYPTION_KEY = base64.urlsafe_b64encode(key_bytes)
+        fernet = Fernet(ENCRYPTION_KEY)
+    except ValueError as e:
+        st.error(f"❌ Erro na chave de criptografia. Verifique se a string hexadecimal está correta: {e}")
+else:
+    st.error("❌ Chave de criptografia não encontrada! Por favor, verifique a chave mascarada no código.")
+
+def decrypt_file_in_memory(file_path):
+    """
+    Lê um arquivo criptografado, descriptografa-o e retorna um objeto BytesIO.
+    Isso permite que o pandas leia o arquivo sem salvá-lo no disco.
+    """
+    if not fernet:
+        return None
+    
+    try:
+        with open(file_path, "rb") as encrypted_file:
+            encrypted_data = encrypted_file.read()
+        
+        decrypted_data = fernet.decrypt(encrypted_data)
+        
+        # Retorna um objeto de arquivo em memória
+        return io.BytesIO(decrypted_data)
+
+    except FileNotFoundError:
+        st.error(f"❌ Arquivo '{file_path}' não encontrado. Por favor, verifique se o arquivo existe.")
+        return None
+    except Exception as e:
+        st.error(f"❌ Erro ao descriptografar o arquivo: {e}")
+        return None
 
 # --- Funções de Utilitário ---
 def get_last_update_info():
@@ -101,7 +153,12 @@ def login_form():
 @st.cache_data
 def load_and_preprocess_data(file_path, start_date, end_date, cache_key):
     try:
-        df = pd.read_excel(file_path)
+        # Descriptografa o arquivo na memória
+        decrypted_file = decrypt_file_in_memory(file_path)
+        if not decrypted_file:
+            return pd.DataFrame(), pd.DataFrame()
+
+        df = pd.read_excel(decrypted_file)
 
         # Renomear colunas para facilitar o uso
         df.rename(columns={
@@ -247,9 +304,9 @@ def generate_insights(kpis, period_label="mês"):
     if not kpis:
         return ["Não foi possível gerar insights devido a problemas nos dados."]
     
-    insights = []
-    
     try:
+        insights = []
+        
         # Qual setor consome mais
         if kpis.get('total_consumed_expedicao', 0) > kpis.get('total_consumed_peneiramento', 0):
             insights.append(f"O setor Expedição consome mais diesel, com {format_number(kpis['total_consumed_expedicao'])} litros acumulados no {period_label}, comparado aos {format_number(kpis['total_consumed_peneiramento'])} litros do setor Peneiramento.")
@@ -264,6 +321,8 @@ def generate_insights(kpis, period_label="mês"):
             insights.append(f"Com base no consumo atual, a projeção para o fechamento do {period_label} é de {format_number(kpis['projected_consumption'])} litros de diesel, com um custo total estimado de R$ {format_number(kpis['projected_cost'])}.")
         else:
             insights.append(f"No período selecionado, o consumo total foi de {format_number(kpis['total_consumed_period'])} litros de diesel, com um custo total de R$ {format_number(kpis['total_cost_period'])}.")
+        
+        return insights
         
     except Exception as e:
         insights.append(f"Erro ao gerar insights: {str(e)}")
@@ -392,8 +451,8 @@ def main():
         period_type = "custom"
     elif filter_type == "Mês Específico":
         selected_month = st.sidebar.selectbox("Selecione o Mês", 
-                                            ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-                                             "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"])
+                                             ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+                                              "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"])
         selected_year = st.sidebar.selectbox("Selecione o Ano", [datetime.now().year, datetime.now().year - 1, datetime.now().year - 2])
         
         month_num = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
@@ -408,10 +467,11 @@ def main():
         period_label = f"{selected_month} de {selected_year}"
         period_type = "custom"
     
-    file_path = "Diesel-area.xlsx"
+    # Caminho para o arquivo criptografado
+    file_path = ENCRYPTED_FILENAME
     
     if not os.path.exists(file_path):
-        st.error("Arquivo de dados não encontrado! Certifique-se de que 'Diesel-area.xlsx' está na mesma pasta que o script.")
+        st.error("Arquivo de dados não encontrado! Certifique-se de que 'Diesel-area.encrypted' está na mesma pasta que o script.")
         return
 
     # Usar o timestamp do JSON como cache_key
