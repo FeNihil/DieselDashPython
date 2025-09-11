@@ -2,4 +2,8 @@ streamlit
 pandas
 plotly
 openpyxl
+<<<<<<< HEAD
 cryptography
+=======
+cryptography
+>>>>>>> a7018bdc25f9e9a054fbaa0f8b0ff93122d08dfa
