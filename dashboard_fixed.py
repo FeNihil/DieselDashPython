@@ -12,14 +12,20 @@ import io
 
 ENCRYPTED_FILENAME = "Diesel-area.encrypted"
 
-_part1 = "e4459187"[::-1]          # invertido
-_part2 = base64.b64encode(b"9052d99a7509f498").decode()[::-1]  # codificado + invertido
-_part3 = "".join(chr(x) for x in [101, 54, 53, 57, 56, 53, 49, 50, 51, 98, 51, 52, 99, 57])  # gerado por código
-_part4 = "b69ff6eafacb9b05f9deb1eb"
+# --- Chave de Criptografia (Ofuscada) ---
+# A chave é dividida e transformada em várias partes para evitar
+# que seja facilmente identificada no código-fonte.
+# Chave original: e44591879052d99a7509f498e6e65985123b34c9b69ff6eafacb9b05f9deb1eb
+
+_part1 = "e4459187"[::-1] # parte 1: invertida
+_part2 = "9052d99a7509f498"[::-1]  # parte 2: invertida
+_part3 = "".join(chr(x) for x in [101, 54, 101, 54, 53, 57, 56, 53, 49, 50, 51, 98, 51, 52, 99, 57])  # parte 3: gerada por código
+_part4 = "b69ff6eafacb9b05f9deb1eb" # parte 4: sem alteração
 
 def build_key():
+    """Reconstrói a chave de criptografia a partir de suas partes ofuscadas."""
     p1 = _part1[::-1]
-    p2 = base64.b64decode(_part2[::-1]).decode()
+    p2 = _part2[::-1]
     p3 = _part3
     p4 = _part4
     return p1 + p2 + p3 + p4
@@ -193,7 +199,7 @@ def load_and_preprocess_data(file_path, start_date, end_date, cache_key):
         # Aplicar filtro de data se fornecido
         if start_date and end_date:
             df = df[(df['DataConsumo'] >= pd.to_datetime(start_date)) & 
-                   (df['DataConsumo'] <= pd.to_datetime(end_date))]
+                           (df['DataConsumo'] <= pd.to_datetime(end_date))]
 
         # Calcular o consumo diário e custo diário por setor
         daily_data = df.groupby(['DataConsumo', 'Setor']).agg(
