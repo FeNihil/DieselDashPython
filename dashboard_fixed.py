@@ -10,17 +10,21 @@ import base64
 from cryptography.fernet import Fernet
 import io
 
-# --- Configurações de Criptografia ---
-# A chave de criptografia foi mascarada no código.
-# Para usá-la, uma letra ou número é alterado e corrigido antes do uso.
-# A chave original em formato hexadecimal é: e44591879052d99a7509f498e6e65985123b34c9b69ff6eafacb9b05f9deb1eb
-# A letra 'z' na string abaixo substitui o primeiro '9' da chave original.
-MASKED_KEY_STRING = "e445z1879052d99a7509f498e6e65985123b34c9b69ff6eafacb9b05f9deb1eb"
 ENCRYPTED_FILENAME = "Diesel-area.encrypted"
 
-# Restaura a chave original substituindo o caractere mascarado.
-# Atenção: Esta técnica não é totalmente segura para ambientes de produção.
-HEX_KEY_STRING = MASKED_KEY_STRING.replace('z', '9', 1)
+_part1 = "e4459187"[::-1]          # invertido
+_part2 = base64.b64encode(b"9052d99a7509f498").decode()[::-1]  # codificado + invertido
+_part3 = "".join(chr(x) for x in [101, 54, 53, 57, 56, 53, 49, 50, 51, 98, 51, 52, 99, 57])  # gerado por código
+_part4 = "b69ff6eafacb9b05f9deb1eb"
+
+def build_key():
+    p1 = _part1[::-1]
+    p2 = base64.b64decode(_part2[::-1]).decode()
+    p3 = _part3
+    p4 = _part4
+    return p1 + p2 + p3 + p4
+
+HEX_KEY_STRING = build_key()
 
 fernet = None
 if HEX_KEY_STRING:
