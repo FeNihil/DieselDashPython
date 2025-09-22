@@ -15,22 +15,9 @@ ENCRYPTED_FILENAME = "Diesel-area.encrypted"
 # --- Chave de Criptografia (Ofuscada) ---
 # A chave é dividida e transformada em várias partes para evitar
 # que seja facilmente identificada no código-fonte.
-# Chave original: e44591879052d99a7509f498e6e65985123b34c9b69ff6eafacb9b05f9deb1eb
 
-_part1 = "e4459187"[::-1] # parte 1: invertida
-_part2 = "9052d99a7509f498"[::-1]  # parte 2: invertida
-_part3 = "".join(chr(x) for x in [101, 54, 101, 54, 53, 57, 56, 53, 49, 50, 51, 98, 51, 52, 99, 57])  # parte 3: gerada por código
-_part4 = "b69ff6eafacb9b05f9deb1eb" # parte 4: sem alteração
-
-def build_key():
-    """Reconstrói a chave de criptografia a partir de suas partes ofuscadas."""
-    p1 = _part1[::-1]
-    p2 = _part2[::-1]
-    p3 = _part3
-    p4 = _part4
-    return p1 + p2 + p3 + p4
-
-HEX_KEY_STRING = build_key()
+# Busca da chave HEX salva nos segredos do Streamlit
+HEX_KEY_STRING = st.secrets["HEX_KEY_STRING"]
 
 fernet = None
 if HEX_KEY_STRING:
@@ -43,7 +30,8 @@ if HEX_KEY_STRING:
     except ValueError as e:
         st.error(f"❌ Erro na chave de criptografia. Verifique se a string hexadecimal está correta: {e}")
 else:
-    st.error("❌ Chave de criptografia não encontrada! Por favor, verifique a chave mascarada no código.")
+    st.error("❌ Chave de criptografia não encontrada nos segredos do Streamlit!")
+
 
 def decrypt_file_in_memory(file_path):
     """
@@ -52,18 +40,16 @@ def decrypt_file_in_memory(file_path):
     """
     if not fernet:
         return None
-    
+
     try:
         with open(file_path, "rb") as encrypted_file:
             encrypted_data = encrypted_file.read()
-        
         decrypted_data = fernet.decrypt(encrypted_data)
-        
         # Retorna um objeto de arquivo em memória
         return io.BytesIO(decrypted_data)
 
     except FileNotFoundError:
-        st.error(f"❌ Arquivo '{file_path}' não encontrado. Por favor, verifique se o arquivo existe.")
+        st.error(f"❌ Arquivo '{file_path}' não encontrado. Verifique se o arquivo existe.")
         return None
     except Exception as e:
         st.error(f"❌ Erro ao descriptografar o arquivo: {e}")
