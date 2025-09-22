@@ -8,6 +8,18 @@ import os
 import io
 import base64
 from cryptography.fernet import Fernet
+import zipfile
+
+def is_valid_xlsx_bytes(b: bytes) -> bool:
+    """
+    Retorna True se os bytes representarem um arquivo ZIP válido,
+    condição necessária para que seja um XLSX válido.
+    """
+    try:
+        with io.BytesIO(b) as bio:
+            return zipfile.is_zipfile(bio)
+    except Exception:
+        return False
 
 # =========================
 # Configuração de página
@@ -36,8 +48,8 @@ else:
 # =========================
 # Constantes e caminhos
 # =========================
-NOME_ARQUIVO_SALVO = "Informativo_Operacional_2025.xlsx"  # criptografado (bytes criptografados)
-CAMINHO_LOGO = "Lhg-02.png"  # colocar na raiz do repo ou ajuste caminho relativo
+NOME_ARQUIVO_SALVO = "Informativo_Operacional.encrypted"  # arquivo criptografado (token Fernet)
+CAMINHO_LOGO = "Lhg-02.png"
 
 NOME_ABA = "BD_Real"
 MAPEAMENTO_COLUNAS = {
@@ -147,23 +159,54 @@ st.markdown("---")
 # =========================
 def tentar_carregar_df() -> pd.DataFrame | None:
     if fernet is None:
+        st.error("Chave Fernet indisponível; verifique HEX_KEY_STRING em secrets.")
         return None
 
-    # 1) Tentar ler bytes criptografados do arquivo no repo
+    # 1) Tentar ler o token criptografado do repositório
     cipher_bytes_repo = ler_bytes_arquivo_local(NOME_ARQUIVO_SALVO)
     if cipher_bytes_repo:
+        st.info(f"Arquivo criptografado detectado no repo: {NOME_ARQUIVO_SALVO} ({len(cipher_bytes_repo)} bytes).")
         plain_bytes = descriptografar_bytes(cipher_bytes_repo, fernet)
         if plain_bytes:
-            return carregar_excel_em_df(plain_bytes)
+            st.info(f"Descriptografia OK: {len(plain_bytes)} bytes após decrypt.")
+            df_local = carregar_excel_em_df(plain_bytes)
+            if df_local is not None:
+                return df_local
+            else:
+                st.warning("Descriptografia ocorreu, mas leitura do Excel falhou. Confirme se o arquivo original era XLSX válido.")
 
-    # 2) Fallback: permitir upload do arquivo criptografado
-    st.info("Carregue o arquivo Excel criptografado (mesma chave) via upload.")
-    up = st.file_uploader("Selecione o arquivo Excel criptografado", type=["xlsx", "bin"])
+    # 2) Fallback: upload do arquivo criptografado
+    st.info("Carregue o arquivo criptografado gerado por Fernet (extensões sugeridas: .encrypted, .bin).")
+    up = st.file_uploader(
+        "Selecione o arquivo Excel criptografado (token Fernet)",
+        type=["encrypted", "bin", "xlsx"]  # "xlsx" apenas para fallback de teste
+    )
     if up is not None:
-        cipher_bytes_upload = up.read()
-        plain_bytes = descriptografar_bytes(cipher_bytes_upload, fernet)
+        st.write(f"Arquivo recebido: {up.name}")
+        up_bytes = up.read()
+        st.write(f"Tamanho do arquivo enviado: {len(up_bytes)} bytes.")
+        # Tenta descriptografar primeiro (caminho padrão)
+        plain_bytes = descriptografar_bytes(up_bytes, fernet)
         if plain_bytes:
-            return carregar_excel_em_df(plain_bytes)
+            st.info(f"Descriptografia OK: {len(plain_bytes)} bytes.")
+            df_up = carregar_excel_em_df(plain_bytes)
+            if df_up is not None:
+                return df_up
+            else:
+                st.warning("Descriptografia OK, mas XLSX inválido. Verifique se o arquivo original era XLSX.")
+        else:
+            # Fallback opcional para testes: tentar ler como XLSX em claro
+            st.warning("Tentando interpretar o arquivo enviado como XLSX em claro (apenas para testes).")
+            if is_valid_xlsx_bytes(up_bytes):
+                df_clear = carregar_excel_em_df(up_bytes)
+                if df_clear is not None:
+                    st.success("Arquivo em claro lido com sucesso (sem criptografia).")
+                    return df_clear
+                else:
+                    st.error("Falha ao ler arquivo em claro como XLSX.")
+            else:
+                st.error("O arquivo enviado não é token Fernet válido e também não é XLSX válido.")
+
     return None
 
 if 'df_producao' not in st.session_state:
