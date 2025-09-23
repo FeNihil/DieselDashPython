@@ -269,6 +269,7 @@ def normal_login():
                     update_last_login(username)
                     log_access(username, "login")
                     st.success("Login realizado com sucesso!")
+                    time.sleep(1)
                     st.rerun()
                 else:
                     st.error("Usuário ou senha incorretos!")
@@ -296,6 +297,7 @@ def admin_login():
                     update_last_login(username)
                     log_access(username, "admin_login")
                     st.success("Acesso ao painel administrativo autorizado!")
+                    time.sleep(1)
                     st.rerun()
                 else:
                     st.error("Credenciais inválidas ou usuário sem privilégios administrativos!")
@@ -354,6 +356,12 @@ def admin_panel():
                     del st.session_state[key]
             st.rerun()
     
+    # Botão para voltar ao dashboard
+    st.sidebar.header("🔄 Navegação")
+    if st.sidebar.button("📊 Voltar ao Dashboard"):
+        st.session_state.access_mode = "dashboard"
+        st.rerun()
+    
     # Tabs do painel
     tab1, tab2, tab3 = st.tabs(["👥 Gerenciar Usuários", "➕ Criar Usuário", "📊 Logs de Acesso"])
     
@@ -383,7 +391,7 @@ def user_management_tab():
             "Nome Completo": info.get("full_name", "N/A"),
             "Email": info.get("email", "N/A"),
             "Função": info.get("role", "user"),
-            "Criado em": info.get("created_at", "N/A")[:19],
+            "Criado em": info.get("created_at", "N/A")[:19] if info.get("created_at") else "N/A",
             "Último Login": info.get("last_login", "Nunca")[:19] if info.get("last_login") else "Nunca"
         })
     
@@ -435,6 +443,7 @@ def user_management_tab():
                     if success:
                         st.success(message)
                         log_access(st.session_state.username, f"updated_user_{selected_user}")
+                        time.sleep(1)
                         st.rerun()
                     else:
                         st.error(message)
@@ -444,6 +453,7 @@ def user_management_tab():
                     if success:
                         st.success(message)
                         log_access(st.session_state.username, f"deleted_user_{selected_user}")
+                        time.sleep(1)
                         st.rerun()
                     else:
                         st.error(message)
@@ -455,7 +465,7 @@ def user_management_tab():
             st.write(f"**Email:** {user_info.get('email', 'N/A')}")
             st.write(f"**Nome:** {user_info.get('full_name', 'N/A')}")
             st.write(f"**Função:** {user_info.get('role', 'user')}")
-            st.write(f"**Criado:** {user_info.get('created_at', 'N/A')[:19]}")
+            st.write(f"**Criado:** {user_info.get('created_at', 'N/A')[:19] if user_info.get('created_at') else 'N/A'}")
             st.write(f"**Último Login:** {user_info.get('last_login', 'Nunca')[:19] if user_info.get('last_login') else 'Nunca'}")
 
 def create_user_tab():
@@ -495,6 +505,7 @@ def create_user_tab():
                 if success:
                     st.success(message)
                     log_access(st.session_state.username, f"created_user_{new_username}")
+                    time.sleep(1)
                     st.rerun()
                 else:
                     st.error(message)
@@ -524,6 +535,7 @@ def access_logs_tab():
                     with open("access_logs.txt", "w", encoding="utf-8") as f:
                         f.write("")
                     st.success("Logs limpos com sucesso!")
+                    time.sleep(1)
                     st.rerun()
             else:
                 st.info("Nenhum log de acesso encontrado.")
