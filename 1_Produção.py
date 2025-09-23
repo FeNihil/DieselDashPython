@@ -453,11 +453,176 @@ if not df_filtrado.empty:
         st.plotly_chart(fig_pizza_pm04, use_container_width=True)
 
     with st.expander("Clique para ver Estatísticas Detalhadas da Produção"):
-        df_stats = df_produtivo[['total_dia', 'total_pm01', 'total_pm04']].copy()
+        # Base: df_produtivo já tem total_pm01, total_pm04, total_lump, total_sinter, total_hematita, total_dia, media_movel_7d
+        df_stats_base = df_produtivo.copy()
+    
+        # 1) Sumários de produção (Total/“Metal total” por produto)
+        sum_pm01 = df_stats_base['total_pm01'].sum()
+        sum_pm04 = df_stats_base['total_pm04'].sum()
+        sum_comb = df_stats_base['total_dia'].sum()
+
+        sum_lump = df_stats_base.get('total_lump', 0).sum()
+        sum_sinter = df_stats_base.get('total_sinter', 0).sum()
+        sum_hemat = df_stats_base.get('total_hematita', 0).sum()
+
+        dias_prod_pm01 = (df_stats_base['total_pm01'] > 0).sum()
+        dias_prod_pm04 = (df_stats_base['total_pm04'] > 0).sum()
+        dias_prod_comb = (df_stats_base['total_dia'] > 0).sum()
+
+        media_pm01_dia = sum_pm01 / dias_prod_pm01 if dias_prod_pm01 > 0 else 0
+        media_pm04_dia = sum_pm04 / dias_prod_pm04 if dias_prod_pm04 > 0 else 0
+        media_comb_dia = sum_comb / dias_prod_comb if dias_prod_comb > 0 else 0
+
+        # 2) Ritmo e tendência (média móvel 7d já existe como media_movel_7d)
+        ritmo_pm01_7d = (
+            df_stats_base['total_pm01'].rolling(7, min_periods=1).mean().iloc[-1]
+            if not df_stats_base.empty else 0
+        )
+        ritmo_pm04_7d = (
+            df_stats_base['total_pm04'].rolling(7, min_periods=1).mean().iloc[-1]
+            if not df_stats_base.empty else 0
+        )
+        ritmo_comb_7d = df_stats_base['media_movel_7d'].iloc[-1] if not df_stats_base.empty else 0
+
+        # Tendência simples: comparação última semana vs penúltima semana
+        def tendencia_semana(serie):
+            if len(serie) < 14:
+                return 0.0
+            ult7 = serie.iloc[-7:].mean()
+            penult7 = serie.iloc[-14:-7].mean()
+            return ((ult7 - penult7) / penult7 * 100) if penult7 > 0 else 0.0
+
+        tend_pm01 = tendencia_semana(df_stats_base['total_pm01'])
+        tend_pm04 = tendencia_semana(df_stats_base['total_pm04'])
+        tend_comb = tendencia_semana(df_stats_base['total_dia'])
+
+        # 3) Cumprimento de meta no período
+        meta_total_pm01 = META_DIARIA_PM * dias_prod_pm01
+        meta_total_pm04 = META_DIARIA_PM * dias_prod_pm04
+        meta_total_comb = META_DIARIA_TOTAL_COMBINADA * dias_prod_comb
+
+        ating_pm01 = (sum_pm01 / meta_total_pm01 * 100) if meta_total_pm01 > 0 else 0
+        ating_pm04 = (sum_pm04 / meta_total_pm04 * 100) if meta_total_pm04 > 0 else 0
+        ating_comb = (sum_comb / meta_total_comb * 100) if meta_total_comb > 0 else 0
+
+        # Cumprimento por produto (combinado)
+        dias_prod_lump = dias_prod_comb
+        dias_prod_sinter = dias_prod_comb
+        dias_prod_hemat = dias_prod_comb
+
+        meta_lump = META_DIARIA_LUMP_COMBINADA * dias_prod_lump
+        meta_sinter = META_DIARIA_SINTER_COMBINADA * dias_prod_sinter
+        # Não há meta diária explícita de hematita; mantém como informativo sem % meta
+        ating_lump = (sum_lump / meta_lump * 100) if meta_lump > 0 else 0
+        ating_sinter = (sum_sinter / meta_sinter * 100) if meta_sinter > 0 else 0
+
+        # 4) Indicadores de estabilidade/variabilidade
+        def coef_var(serie):
+            m = serie.mean()
+            s = serie.std(ddof=1)
+            return (s / m * 100) if m > 0 else 0.0
+
+        cv_pm01 = coef_var(df_stats_base.loc[df_stats_base['total_pm01'] > 0, 'total_pm01'])
+        cv_pm04 = coef_var(df_stats_base.loc[df_stats_base['total_pm04'] > 0, 'total_pm04'])
+        cv_comb = coef_var(df_stats_base.loc[df_stats_base['total_dia'] > 0, 'total_dia'])
+
+        melhor_dia_pm01 = df_stats_base.loc[df_stats_base['total_pm01'].idxmax(), 'data'].strftime('%d/%m/%Y') if dias_prod_pm01 > 0 else "N/A"
+        melhor_dia_pm04 = df_stats_base.loc[df_stats_base['total_pm04'].idxmax(), 'data'].strftime('%d/%m/%Y') if dias_prod_pm04 > 0 else "N/A"
+        melhor_dia_comb = df_stats_base.loc[df_stats_base['total_dia'].idxmax(), 'data'].strftime('%d/%m/%Y') if dias_prod_comb > 0 else "N/A"
+
+        pior_dia_pm01 = df_stats_base.loc[df_stats_base['total_pm01'].idxmin(), 'data'].strftime('%d/%m/%Y') if dias_prod_pm01 > 0 else "N/A"
+        pior_dia_pm04 = df_stats_base.loc[df_stats_base['total_pm04'].idxmin(), 'data'].strftime('%d/%m/%Y') if dias_prod_pm04 > 0 else "N/A"
+        pior_dia_comb = df_stats_base.loc[df_stats_base['total_dia'].idxmin(), 'data'].strftime('%d/%m/%Y') if dias_prod_comb > 0 else "N/A"
+
+        # 5) Projeções usando "Previsão de Dias Restantes"
+        # Se dias_restantes já calculado acima para combinado, projetar produção adicional se mantiver ritmo atual
+        proj_adic_comb = ritmo_comb_7d * dias_restantes if ritmo_comb_7d > 0 and dias_restantes > 0 else 0
+        proj_total_comb = sum_comb + proj_adic_comb
+
+        # Para PM01 e PM04, aproximar ritmo com suas próprias MM7
+        proj_adic_pm01 = ritmo_pm01_7d * dias_restantes if ritmo_pm01_7d > 0 and dias_restantes > 0 else 0
+        proj_adic_pm04 = ritmo_pm04_7d * dias_restantes if ritmo_pm04_7d > 0 and dias_restantes > 0 else 0
+        proj_total_pm01 = sum_pm01 + proj_adic_pm01
+        proj_total_pm04 = sum_pm04 + proj_adic_pm04
+
+        # Projeção de atingimento ao fim do estoque
+        proj_ating_comb = (proj_total_comb / meta_total_comb * 100) if meta_total_comb > 0 else 0
+        proj_ating_pm01 = (proj_total_pm01 / meta_total_pm01 * 100) if meta_total_pm01 > 0 else 0
+        proj_ating_pm04 = (proj_total_pm04 / meta_total_pm04 * 100) if meta_total_pm04 > 0 else 0
+
+        # 6) Tabela formatada
+        linhas = [
+            {
+                'Entidade': 'Combinado',
+                'Produção Total (t)': format_number_br_no_decimals(sum_comb),
+                'Média Diária (t/dia)': format_number_br_no_decimals(media_comb_dia),
+                'Ritmo MM7 (t/dia)': format_number_br_no_decimals(ritmo_comb_7d),
+                'Tendência 7d vs 7d ant.': f"{tend_comb:.1f}%".replace('.', ','),
+                'Atingimento Meta (%)': f"{ating_comb:.1f}%".replace('.', ','),
+                'CV (%)': f"{cv_comb:.1f}%".replace('.', ','),
+                'Melhor Dia': melhor_dia_comb,
+                'Pior Dia': pior_dia_comb,
+                'Proj. Adicional (t)': format_number_br_no_decimals(proj_adic_comb),
+                'Proj. Total (t)': format_number_br_no_decimals(proj_total_comb),
+                'Proj. Ating. (%)': f"{proj_ating_comb:.1f}%".replace('.', ','),
+            },
+            {
+                'Entidade': 'PM01',
+                'Produção Total (t)': format_number_br_no_decimals(sum_pm01),
+                'Média Diária (t/dia)': format_number_br_no_decimals(media_pm01_dia),
+                'Ritmo MM7 (t/dia)': format_number_br_no_decimals(ritmo_pm01_7d),
+                'Tendência 7d vs 7d ant.': f"{tend_pm01:.1f}%".replace('.', ','),
+                'Atingimento Meta (%)': f"{ating_pm01:.1f}%".replace('.', ','),
+                'CV (%)': f"{cv_pm01:.1f}%".replace('.', ','),
+                'Melhor Dia': melhor_dia_pm01,
+                'Pior Dia': pior_dia_pm01,
+                'Proj. Adicional (t)': format_number_br_no_decimals(proj_adic_pm01),
+                'Proj. Total (t)': format_number_br_no_decimals(proj_total_pm01),
+                'Proj. Ating. (%)': f"{proj_ating_pm01:.1f}%".replace('.', ','),
+            },
+            {
+                'Entidade': 'PM04',
+                'Produção Total (t)': format_number_br_no_decimals(sum_pm04),
+                'Média Diária (t/dia)': format_number_br_no_decimals(media_pm04_dia),
+                'Ritmo MM7 (t/dia)': format_number_br_no_decimals(ritmo_pm04_7d),
+                'Tendência 7d vs 7d ant.': f"{tend_pm04:.1f}%".replace('.', ','),
+                'Atingimento Meta (%)': f"{ating_pm04:.1f}%".replace('.', ','),
+                'CV (%)': f"{cv_pm04:.1f}%".replace('.', ','),
+                'Melhor Dia': melhor_dia_pm04,
+                'Pior Dia': pior_dia_pm04,
+                'Proj. Adicional (t)': format_number_br_no_decimals(proj_adic_pm04),
+                'Proj. Total (t)': format_number_br_no_decimals(proj_total_pm04),
+                'Proj. Ating. (%)': f"{proj_ating_pm04:.1f}%".replace('.', ','),
+            },
+        ]
+        df_resumo = pd.DataFrame(linhas)
+
+        st.markdown("#### Resumo Estatístico por Entidade")
+        st.dataframe(df_resumo, use_container_width=True)
+
+        st.markdown("#### Estatísticas Descritivas (Combinado/PM01/PM04)")
+        df_stats = df_stats_base[['total_dia', 'total_pm01', 'total_pm04']].copy()
         df_stats.columns = ['Total Combinado', 'Total PM01', 'Total PM04']
-        df_stats_formatted = df_stats.describe().T
-        for col in df_stats_formatted.columns:
-            df_stats_formatted[col] = df_stats_formatted[col].apply(lambda x: format_number_br_with_decimals(x, 2))
-        st.dataframe(df_stats_formatted)
+        desc = df_stats.describe().T
+        for col in desc.columns:
+            desc[col] = desc[col].apply(lambda x: format_number_br_with_decimals(x, 2))
+        st.dataframe(desc, use_container_width=True)
+
+        st.markdown("#### Metal Total por Produto (Combinado)")
+        df_prod = pd.DataFrame({
+            'Produto': ['Lump', 'Sinter Feed', 'Hematita'],
+            'Metal Total (t)': [
+                format_number_br_no_decimals(sum_lump),
+                format_number_br_no_decimals(sum_sinter),
+                format_number_br_no_decimals(sum_hemat),
+            ],
+            'Atingimento Meta (%)': [
+                f"{ating_lump:.1f}%".replace('.', ','),
+                f"{ating_sinter:.1f}%".replace('.', ','),
+                "—",
+            ],
+        })
+        st.dataframe(df_prod, use_container_width=True)
+
 else:
     st.warning("Não há dias produtivos para o período selecionado.")
