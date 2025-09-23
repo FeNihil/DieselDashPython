@@ -1,20 +1,16 @@
 import streamlit as st
 
-# Evite acentos nos nomes de arquivo referenciados, se possível, para reduzir riscos de path/case.
-# Se o arquivo realmente se chama "1_Produção.py", este arquivo é o registrador e NÃO deve apontar para si próprio.
+producao = st.Page(__file__, title="Produção", icon="📊")  # aponta para o próprio arquivo
+qualidade = st.Page("pages/2_Qualidade.py", title="Qualidade", icon="🔬")
+pg = st.navigation([producao, qualidade])
 
-# Registre a página principal apontando para um arquivo com o conteúdo da Produção
-producao_page = st.Page("1_Produção.py", title="Produção", icon="📊")          # conteúdo principal vai aqui
-qualidade_page = st.Page("pages/2_Qualidade.py", title="Qualidade", icon="🔬")    # subpágina na pasta pages/
-
-# Navegação
-pg = st.navigation([producao_page, qualidade_page])
-
-# Opcional: config global; se preferir, remova daqui e configure por página
-st.set_page_config(layout="wide", page_title="Dashboard de Produção Tupacery")
-
-# Executa a página selecionada
-pg.run()
+# Descobre a página selecionada sem reexecutar a atual
+if pg.page_path != __file__:
+    pg.run()  # executa a outra página
+else:
+    # Conteúdo da página Produção vai aqui (sem st.navigation dentro)
+    st.set_page_config(layout="wide", page_title="Dashboard de Produção Tupacery")
+    st.title("Dashboard de Produção - Peneiras Móveis Tupacery")
 
 import pandas as pd
 import plotly.express as px
