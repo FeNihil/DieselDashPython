@@ -1,4 +1,21 @@
 import streamlit as st
+
+# Evite acentos nos nomes de arquivo referenciados, se possível, para reduzir riscos de path/case.
+# Se o arquivo realmente se chama "1_Produção.py", este arquivo é o registrador e NÃO deve apontar para si próprio.
+
+# Registre a página principal apontando para um arquivo com o conteúdo da Produção
+producao_page = st.Page("home_producao.py", title="Produção", icon="📊")          # conteúdo principal vai aqui
+qualidade_page = st.Page("pages/2_Qualidade.py", title="Qualidade", icon="🔬")    # subpágina na pasta pages/
+
+# Navegação
+pg = st.navigation([producao_page, qualidade_page])
+
+# Opcional: config global; se preferir, remova daqui e configure por página
+st.set_page_config(layout="wide", page_title="Dashboard de Produção Tupacery")
+
+# Executa a página selecionada
+pg.run()
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -15,11 +32,6 @@ import zipfile
 # ======================================================
 # Observação: ao usar st.navigation, defina explicitamente os caminhos das páginas;
 # é válido referenciar arquivos dentro de 'pages/' com caminho relativo. [web:15][web:18]
-
-producao_page = st.Page("1_Producao.py", title="Produção", icon="📊")          # arquivo na raiz [web:14][web:15]
-qualidade_page = st.Page("pages/2_Qualidade.py", title="Qualidade", icon="🔬")  # arquivo em pages/ [web:15][web:18]
-
-pg = st.navigation([producao_page, qualidade_page])  # crie a navegação uma única vez por execução [web:18]
 
 def is_valid_xlsx_bytes(b: bytes) -> bool:
     """
