@@ -90,12 +90,39 @@ def format_number_br_with_decimals(number, decimals=2):
 # =========================
 # I/O: carregar bytes criptografados e descriptografar
 # =========================
-@st.cache_data(ttl=3600)
 def ler_bytes_arquivo_local(caminho: str) -> bytes | None:
+    """
+    Lê arquivo local sem cache - sempre pega a versão mais atual do repositório
+    """
     if not os.path.exists(caminho):
         return None
-    with open(caminho, "rb") as f:
-        return f.read()
+    try:
+        # Obtém informações do arquivo para verificar se mudou
+        stat_info = os.stat(caminho)
+        file_size = stat_info.st_size
+        file_mtime = stat_info.st_mtime
+        
+        # Cria uma chave única baseada no arquivo
+        cache_key = f"{caminho}_{file_size}_{file_mtime}"
+        
+        # Verifica se já temos este arquivo em cache
+        if 'file_cache' not in st.session_state:
+            st.session_state['file_cache'] = {}
+        
+        if cache_key in st.session_state['file_cache']:
+            return st.session_state['file_cache'][cache_key]
+        
+        # Lê o arquivo
+        with open(caminho, "rb") as f:
+            file_bytes = f.read()
+        
+        # Limpa cache antigo e salva o novo
+        st.session_state['file_cache'] = {cache_key: file_bytes}
+        
+        return file_bytes
+    except Exception as e:
+        st.error(f"Erro ao ler arquivo {caminho}: {e}")
+        return None
 
 def descriptografar_bytes(cipher_bytes: bytes, fernet_obj: Fernet) -> bytes | None:
     try:
@@ -104,7 +131,7 @@ def descriptografar_bytes(cipher_bytes: bytes, fernet_obj: Fernet) -> bytes | No
         st.error(f"Erro ao descriptografar o arquivo: {e}")
         return None
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=300)  # Cache reduzido para 5 minutos
 def carregar_excel_em_df(excel_bytes: bytes) -> pd.DataFrame | None:
     try:
         df = pd.read_excel(io.BytesIO(excel_bytes), sheet_name=NOME_ABA, header=[0, 1, 2])
@@ -157,7 +184,10 @@ st.markdown("---")
 # =========================
 # Entrada de dados: prioriza arquivo no repo; fallback uploader
 # =========================
-def tentar_carregar_df() -> pd.DataFrame | None:
+def carregar_dados_automaticamente() -> pd.DataFrame | None:
+    """
+    Carrega dados automaticamente, priorizando arquivo do repositório
+    """
     if fernet is None:
         st.error("Chave Fernet indisponível; verifique HEX_KEY_STRING em secrets.")
         return None
@@ -165,30 +195,38 @@ def tentar_carregar_df() -> pd.DataFrame | None:
     # 1) Tentar ler o token criptografado do repositório
     cipher_bytes_repo = ler_bytes_arquivo_local(NOME_ARQUIVO_SALVO)
     if cipher_bytes_repo:
-        st.info(f"Arquivo criptografado detectado no repo: {NOME_ARQUIVO_SALVO} ({len(cipher_bytes_repo)} bytes).")
+        st.success(f"✅ Dados carregados do repositório: {NOME_ARQUIVO_SALVO}")
         plain_bytes = descriptografar_bytes(cipher_bytes_repo, fernet)
         if plain_bytes:
-            st.info(f"Descriptografia OK: {len(plain_bytes)} bytes após decrypt.")
             df_local = carregar_excel_em_df(plain_bytes)
             if df_local is not None:
+                # Mostra informação sobre a última atualização
+                try:
+                    stat_info = os.stat(NOME_ARQUIVO_SALVO)
+                    ultima_modificacao = datetime.fromtimestamp(stat_info.st_mtime)
+                    st.info(f"📅 Última atualização: {ultima_modificacao.strftime('%d/%m/%Y às %H:%M:%S')}")
+                except:
+                    pass
                 return df_local
             else:
                 st.warning("Descriptografia ocorreu, mas leitura do Excel falhou. Confirme se o arquivo original era XLSX válido.")
 
     # 2) Fallback: upload do arquivo criptografado
-    st.info("Carregue o arquivo criptografado gerado por Fernet (extensões sugeridas: .encrypted, .bin).")
+    st.warning("⚠️ Arquivo não encontrado no repositório. Faça upload do arquivo criptografado:")
     up = st.file_uploader(
         "Selecione o arquivo Excel criptografado (token Fernet)",
-        type=["encrypted", "bin", "xlsx"]  # "xlsx" apenas para fallback de teste
+        type=["encrypted", "bin", "xlsx"],
+        help="Envie o arquivo .encrypted gerado pelo processo de criptografia"
     )
     if up is not None:
-        st.write(f"Arquivo recebido: {up.name}")
+        st.write(f"📁 Arquivo recebido: {up.name}")
         up_bytes = up.read()
-        st.write(f"Tamanho do arquivo enviado: {len(up_bytes)} bytes.")
+        st.write(f"📊 Tamanho do arquivo: {len(up_bytes)} bytes")
+        
         # Tenta descriptografar primeiro (caminho padrão)
         plain_bytes = descriptografar_bytes(up_bytes, fernet)
         if plain_bytes:
-            st.info(f"Descriptografia OK: {len(plain_bytes)} bytes.")
+            st.success("🔓 Descriptografia realizada com sucesso!")
             df_up = carregar_excel_em_df(plain_bytes)
             if df_up is not None:
                 return df_up
@@ -196,30 +234,27 @@ def tentar_carregar_df() -> pd.DataFrame | None:
                 st.warning("Descriptografia OK, mas XLSX inválido. Verifique se o arquivo original era XLSX.")
         else:
             # Fallback opcional para testes: tentar ler como XLSX em claro
-            st.warning("Tentando interpretar o arquivo enviado como XLSX em claro (apenas para testes).")
+            st.warning("⚠️ Tentando interpretar como XLSX não criptografado (apenas para testes)...")
             if is_valid_xlsx_bytes(up_bytes):
                 df_clear = carregar_excel_em_df(up_bytes)
                 if df_clear is not None:
-                    st.success("Arquivo em claro lido com sucesso (sem criptografia).")
+                    st.info("📈 Arquivo lido sem criptografia (modo de teste)")
                     return df_clear
                 else:
-                    st.error("Falha ao ler arquivo em claro como XLSX.")
+                    st.error("❌ Falha ao ler arquivo como XLSX.")
             else:
-                st.error("O arquivo enviado não é token Fernet válido e também não é XLSX válido.")
+                st.error("❌ Arquivo não é um token Fernet válido nem um XLSX válido.")
 
     return None
 
-if 'df_producao' not in st.session_state:
-    st.session_state['df_producao'] = tentar_carregar_df()
+# Carregamento automático dos dados (sem botão)
+df_producao = carregar_dados_automaticamente()
 
-if st.button("Recarregar dados"):
-    st.session_state['df_producao'] = tentar_carregar_df()
-
-if st.session_state['df_producao'] is None:
-    st.warning("Não foi possível carregar os dados. Verifique o arquivo criptografado e a chave em secrets.")
+if df_producao is None:
+    st.error("❌ Não foi possível carregar os dados. Verifique o arquivo criptografado e a chave em secrets.")
     st.stop()
 
-df = st.session_state['df_producao']
+df = df_producao
 
 # =========================
 # Sidebar e filtros
@@ -253,6 +288,10 @@ st.sidebar.markdown("**Combinada:**")
 st.sidebar.markdown(f"- Total: `{format_number_br_no_decimals(META_DIARIA_TOTAL_COMBINADA)} t`")
 st.sidebar.markdown(f"- Lump: `{format_number_br_no_decimals(META_DIARIA_LUMP_COMBINADA)} t`")
 st.sidebar.markdown(f"- Sinter: `{format_number_br_no_decimals(META_DIARIA_SINTER_COMBINADA)} t`")
+
+# Informação sobre atualização automática
+st.sidebar.markdown("---")
+st.sidebar.info("🔄 Os dados são atualizados automaticamente quando o arquivo for modificado no repositório.")
 
 if isinstance(data_selecionada, tuple) and len(data_selecionada) == 2:
     data_inicio_filtro, data_fim_filtro = data_selecionada
@@ -456,14 +495,10 @@ if not df_filtrado.empty:
         # Base: df_produtivo já tem total_pm01, total_pm04, total_lump, total_sinter, total_hematita, total_dia, media_movel_7d
         df_stats_base = df_produtivo.copy()
     
-        # 1) Sumários de produção (Total/“Metal total” por produto)
+        # 1) Sumários de produção
         sum_pm01 = df_stats_base['total_pm01'].sum()
         sum_pm04 = df_stats_base['total_pm04'].sum()
         sum_comb = df_stats_base['total_dia'].sum()
-
-        sum_lump = df_stats_base.get('total_lump', 0).sum()
-        sum_sinter = df_stats_base.get('total_sinter', 0).sum()
-        sum_hemat = df_stats_base.get('total_hematita', 0).sum()
 
         dias_prod_pm01 = (df_stats_base['total_pm01'] > 0).sum()
         dias_prod_pm04 = (df_stats_base['total_pm04'] > 0).sum()
@@ -484,7 +519,7 @@ if not df_filtrado.empty:
         )
         ritmo_comb_7d = df_stats_base['media_movel_7d'].iloc[-1] if not df_stats_base.empty else 0
 
-        # Tendência simples: comparação última semana vs penúltima semana
+        # Tendência: última semana vs penúltima semana
         def tendencia_semana(serie):
             if len(serie) < 14:
                 return 0.0
@@ -496,72 +531,39 @@ if not df_filtrado.empty:
         tend_pm04 = tendencia_semana(df_stats_base['total_pm04'])
         tend_comb = tendencia_semana(df_stats_base['total_dia'])
 
-        # 3) Cumprimento de meta no período
+        # 3) Metas totais do período
         meta_total_pm01 = META_DIARIA_PM * dias_prod_pm01
         meta_total_pm04 = META_DIARIA_PM * dias_prod_pm04
         meta_total_comb = META_DIARIA_TOTAL_COMBINADA * dias_prod_comb
 
+        # 4) Atingimento no período
         ating_pm01 = (sum_pm01 / meta_total_pm01 * 100) if meta_total_pm01 > 0 else 0
         ating_pm04 = (sum_pm04 / meta_total_pm04 * 100) if meta_total_pm04 > 0 else 0
         ating_comb = (sum_comb / meta_total_comb * 100) if meta_total_comb > 0 else 0
 
-        # Cumprimento por produto (combinado)
-        dias_prod_lump = dias_prod_comb
-        dias_prod_sinter = dias_prod_comb
-        dias_prod_hemat = dias_prod_comb
-
-        meta_lump = META_DIARIA_LUMP_COMBINADA * dias_prod_lump
-        meta_sinter = META_DIARIA_SINTER_COMBINADA * dias_prod_sinter
-        # Não há meta diária explícita de hematita; mantém como informativo sem % meta
-        ating_lump = (sum_lump / meta_lump * 100) if meta_lump > 0 else 0
-        ating_sinter = (sum_sinter / meta_sinter * 100) if meta_sinter > 0 else 0
-
-        # 4) Indicadores de estabilidade/variabilidade
-        def coef_var(serie):
-            m = serie.mean()
-            s = serie.std(ddof=1)
-            return (s / m * 100) if m > 0 else 0.0
-
-        cv_pm01 = coef_var(df_stats_base.loc[df_stats_base['total_pm01'] > 0, 'total_pm01'])
-        cv_pm04 = coef_var(df_stats_base.loc[df_stats_base['total_pm04'] > 0, 'total_pm04'])
-        cv_comb = coef_var(df_stats_base.loc[df_stats_base['total_dia'] > 0, 'total_dia'])
-
-        melhor_dia_pm01 = df_stats_base.loc[df_stats_base['total_pm01'].idxmax(), 'data'].strftime('%d/%m/%Y') if dias_prod_pm01 > 0 else "N/A"
-        melhor_dia_pm04 = df_stats_base.loc[df_stats_base['total_pm04'].idxmax(), 'data'].strftime('%d/%m/%Y') if dias_prod_pm04 > 0 else "N/A"
-        melhor_dia_comb = df_stats_base.loc[df_stats_base['total_dia'].idxmax(), 'data'].strftime('%d/%m/%Y') if dias_prod_comb > 0 else "N/A"
-
-        pior_dia_pm01 = df_stats_base.loc[df_stats_base['total_pm01'].idxmin(), 'data'].strftime('%d/%m/%Y') if dias_prod_pm01 > 0 else "N/A"
-        pior_dia_pm04 = df_stats_base.loc[df_stats_base['total_pm04'].idxmin(), 'data'].strftime('%d/%m/%Y') if dias_prod_pm04 > 0 else "N/A"
-        pior_dia_comb = df_stats_base.loc[df_stats_base['total_dia'].idxmin(), 'data'].strftime('%d/%m/%Y') if dias_prod_comb > 0 else "N/A"
-
         # 5) Projeções usando "Previsão de Dias Restantes"
-        # Se dias_restantes já calculado acima para combinado, projetar produção adicional se mantiver ritmo atual
         proj_adic_comb = ritmo_comb_7d * dias_restantes if ritmo_comb_7d > 0 and dias_restantes > 0 else 0
         proj_total_comb = sum_comb + proj_adic_comb
 
-        # Para PM01 e PM04, aproximar ritmo com suas próprias MM7
         proj_adic_pm01 = ritmo_pm01_7d * dias_restantes if ritmo_pm01_7d > 0 and dias_restantes > 0 else 0
         proj_adic_pm04 = ritmo_pm04_7d * dias_restantes if ritmo_pm04_7d > 0 and dias_restantes > 0 else 0
         proj_total_pm01 = sum_pm01 + proj_adic_pm01
         proj_total_pm04 = sum_pm04 + proj_adic_pm04
 
-        # Projeção de atingimento ao fim do estoque
         proj_ating_comb = (proj_total_comb / meta_total_comb * 100) if meta_total_comb > 0 else 0
         proj_ating_pm01 = (proj_total_pm01 / meta_total_pm01 * 100) if meta_total_pm01 > 0 else 0
         proj_ating_pm04 = (proj_total_pm04 / meta_total_pm04 * 100) if meta_total_pm04 > 0 else 0
 
-        # 6) Tabela formatada
+        # 6) Tabela Resumo por Entidade (sem CV e sem melhor/pior dia)
         linhas = [
             {
                 'Entidade': 'Combinado',
                 'Produção Total (t)': format_number_br_no_decimals(sum_comb),
+                'Meta Total (t)': format_number_br_no_decimals(meta_total_comb),
                 'Média Diária (t/dia)': format_number_br_no_decimals(media_comb_dia),
                 'Ritmo MM7 (t/dia)': format_number_br_no_decimals(ritmo_comb_7d),
                 'Tendência 7d vs 7d ant.': f"{tend_comb:.1f}%".replace('.', ','),
                 'Atingimento Meta (%)': f"{ating_comb:.1f}%".replace('.', ','),
-                'CV (%)': f"{cv_comb:.1f}%".replace('.', ','),
-                'Melhor Dia': melhor_dia_comb,
-                'Pior Dia': pior_dia_comb,
                 'Proj. Adicional (t)': format_number_br_no_decimals(proj_adic_comb),
                 'Proj. Total (t)': format_number_br_no_decimals(proj_total_comb),
                 'Proj. Ating. (%)': f"{proj_ating_comb:.1f}%".replace('.', ','),
@@ -569,13 +571,11 @@ if not df_filtrado.empty:
             {
                 'Entidade': 'PM01',
                 'Produção Total (t)': format_number_br_no_decimals(sum_pm01),
+                'Meta Total (t)': format_number_br_no_decimals(meta_total_pm01),
                 'Média Diária (t/dia)': format_number_br_no_decimals(media_pm01_dia),
                 'Ritmo MM7 (t/dia)': format_number_br_no_decimals(ritmo_pm01_7d),
                 'Tendência 7d vs 7d ant.': f"{tend_pm01:.1f}%".replace('.', ','),
                 'Atingimento Meta (%)': f"{ating_pm01:.1f}%".replace('.', ','),
-                'CV (%)': f"{cv_pm01:.1f}%".replace('.', ','),
-                'Melhor Dia': melhor_dia_pm01,
-                'Pior Dia': pior_dia_pm01,
                 'Proj. Adicional (t)': format_number_br_no_decimals(proj_adic_pm01),
                 'Proj. Total (t)': format_number_br_no_decimals(proj_total_pm01),
                 'Proj. Ating. (%)': f"{proj_ating_pm01:.1f}%".replace('.', ','),
@@ -583,13 +583,11 @@ if not df_filtrado.empty:
             {
                 'Entidade': 'PM04',
                 'Produção Total (t)': format_number_br_no_decimals(sum_pm04),
+                'Meta Total (t)': format_number_br_no_decimals(meta_total_pm04),
                 'Média Diária (t/dia)': format_number_br_no_decimals(media_pm04_dia),
                 'Ritmo MM7 (t/dia)': format_number_br_no_decimals(ritmo_pm04_7d),
                 'Tendência 7d vs 7d ant.': f"{tend_pm04:.1f}%".replace('.', ','),
                 'Atingimento Meta (%)': f"{ating_pm04:.1f}%".replace('.', ','),
-                'CV (%)': f"{cv_pm04:.1f}%".replace('.', ','),
-                'Melhor Dia': melhor_dia_pm04,
-                'Pior Dia': pior_dia_pm04,
                 'Proj. Adicional (t)': format_number_br_no_decimals(proj_adic_pm04),
                 'Proj. Total (t)': format_number_br_no_decimals(proj_total_pm04),
                 'Proj. Ating. (%)': f"{proj_ating_pm04:.1f}%".replace('.', ','),
@@ -599,30 +597,6 @@ if not df_filtrado.empty:
 
         st.markdown("#### Resumo Estatístico por Entidade")
         st.dataframe(df_resumo, use_container_width=True)
-
-        st.markdown("#### Estatísticas Descritivas (Combinado/PM01/PM04)")
-        df_stats = df_stats_base[['total_dia', 'total_pm01', 'total_pm04']].copy()
-        df_stats.columns = ['Total Combinado', 'Total PM01', 'Total PM04']
-        desc = df_stats.describe().T
-        for col in desc.columns:
-            desc[col] = desc[col].apply(lambda x: format_number_br_with_decimals(x, 2))
-        st.dataframe(desc, use_container_width=True)
-
-        st.markdown("#### Metal Total por Produto (Combinado)")
-        df_prod = pd.DataFrame({
-            'Produto': ['Lump', 'Sinter Feed', 'Hematita'],
-            'Metal Total (t)': [
-                format_number_br_no_decimals(sum_lump),
-                format_number_br_no_decimals(sum_sinter),
-                format_number_br_no_decimals(sum_hemat),
-            ],
-            'Atingimento Meta (%)': [
-                f"{ating_lump:.1f}%".replace('.', ','),
-                f"{ating_sinter:.1f}%".replace('.', ','),
-                "—",
-            ],
-        })
-        st.dataframe(df_prod, use_container_width=True)
 
 else:
     st.warning("Não há dias produtivos para o período selecionado.")
