@@ -178,7 +178,7 @@ try:
 except Exception:
     st.info("Falha ao carregar a logo. Verifique o arquivo Lhg-02.png.")
 
-st.title("Dashboard de Produção - Peneiras Móveis Tuypacery")
+st.title("Dashboard de Produção - Peneiras Móveis Tupacery")
 st.markdown("---")
 
 # =========================
