@@ -332,7 +332,7 @@ if not df_filtrado.empty:
 
         meta_total_pm01_periodo = META_DIARIA_PM * dias_produtivos_pm01
         meta_total_pm04_periodo = META_DIARIA_PM * dias_produtivos_pm04
-        meta_total_combinada_periodo = META_DIARIA_TOTAL_COMBINADA * dias_produtivos_combinado
+        meta_total_combinada_periodo = meta_total_pm01_periodo + meta_total_pm04_periodo
 
         atingimento_pm01 = (prod_total_pm01 / meta_total_pm01_periodo) * 100 if meta_total_pm01_periodo > 0 else 0
         atingimento_pm04 = (prod_total_pm04 / meta_total_pm04_periodo) * 100 if meta_total_pm04_periodo > 0 else 0
@@ -534,7 +534,7 @@ if not df_filtrado.empty:
         # 3) Metas totais do período
         meta_total_pm01 = META_DIARIA_PM * dias_prod_pm01
         meta_total_pm04 = META_DIARIA_PM * dias_prod_pm04
-        meta_total_comb = META_DIARIA_TOTAL_COMBINADA * dias_prod_comb
+        meta_total_comb = meta_total_pm04 + meta_total_pm01
 
         # 4) Atingimento no período
         ating_pm01 = (sum_pm01 / meta_total_pm01 * 100) if meta_total_pm01 > 0 else 0
