@@ -1,16 +1,10 @@
 import streamlit as st
+st.set_page_config(layout="wide", page_title="Dashboard de Produção Tupacery")
 
-producao = st.Page(__file__, title="Produção", icon="📊")  # aponta para o próprio arquivo
-qualidade = st.Page("pages/2_Qualidade.py", title="Qualidade", icon="🔬")
-pg = st.navigation([producao, qualidade])
+st.sidebar.page_link("1_Produção.py", label="Produção", icon="📊")
+st.sidebar.page_link("pages/2_Qualidade.py", label="Qualidade", icon="🔬")
 
-# Descobre a página selecionada sem reexecutar a atual
-if pg.page_path != __file__:
-    pg.run()  # executa a outra página
-else:
-    # Conteúdo da página Produção vai aqui (sem st.navigation dentro)
-    st.set_page_config(layout="wide", page_title="Dashboard de Produção Tupacery")
-    st.title("Dashboard de Produção - Peneiras Móveis Tupacery")
+st.title("Dashboard de Produção - Peneiras Móveis Tupacery")
 
 import pandas as pd
 import plotly.express as px
