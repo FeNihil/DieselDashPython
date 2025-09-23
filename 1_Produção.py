@@ -414,7 +414,12 @@ if not df_filtrado.empty:
                 }
             )
         )
-        fig_meta_pm01.update_layout(height=250, margin=dict(l=20, r=20, b=20, t=50), paper_bgcolor="rgba(0,0,0,0)", font={'color': "white"})
+        fig_meta_pm01.update_layout(
+            height=250, 
+            margin=dict(l=20, r=20, b=20, t=50), 
+            paper_bgcolor="rgba(0,0,0,0)",
+            font={'color': "var(--text-color)"}
+            )
         st.plotly_chart(fig_meta_pm01, use_container_width=True)
 
     with meta_chart2:
@@ -435,7 +440,12 @@ if not df_filtrado.empty:
                 }
             )
         )
-        fig_meta_pm04.update_layout(height=250, margin=dict(l=20, r=20, b=20, t=50), paper_bgcolor="rgba(0,0,0,0)", font={'color': "white"})
+        fig_meta_pm04.update_layout(
+            height=250, 
+            margin=dict(l=20, r=20, b=20, t=50), 
+            paper_bgcolor="rgba(0,0,0,0)",
+            font={'color': "var(--text-color)"}
+            )
         st.plotly_chart(fig_meta_pm04, use_container_width=True)
 
     st.markdown("---")
