@@ -4,7 +4,7 @@ import streamlit as st
 # Se o arquivo realmente se chama "1_Produção.py", este arquivo é o registrador e NÃO deve apontar para si próprio.
 
 # Registre a página principal apontando para um arquivo com o conteúdo da Produção
-producao_page = st.Page("home_producao.py", title="Produção", icon="📊")          # conteúdo principal vai aqui
+producao_page = st.Page("1_Produção.py", title="Produção", icon="📊")          # conteúdo principal vai aqui
 qualidade_page = st.Page("pages/2_Qualidade.py", title="Qualidade", icon="🔬")    # subpágina na pasta pages/
 
 # Navegação
