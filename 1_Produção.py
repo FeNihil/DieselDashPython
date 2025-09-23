@@ -1,15 +1,19 @@
 import streamlit as st
 
-producao = st.Page(__file__, title="Produção", icon="📊")                          # [web:15]
-qualidade = st.Page("pages/2_Qualidade.py", title="Qualidade", icon="🔬")         # [web:15]
-pg = st.navigation([producao, qualidade])                                         # [web:18]
+# Definição de páginas
+producao = st.Page(__file__, title="Produção", icon="📊")              # aponta para ESTE arquivo [web:15]
+qualidade = st.Page("pages/2_Qualidade.py", title="Qualidade", icon="🔬")  # subpágina no diretório pages [web:15]
 
-# pg.page retorna a Page ativa; compare com 'producao'
-if pg.page is not producao:   # quando outra página for selecionada, delegue [web:18]
-    pg.run()                  # executa a outra página (Qualidade) [web:18]
+pg = st.navigation([producao, qualidade])  # Produção é índice 0 [web:18]
+
+# Se a página ativa não for a principal, delega a execução
+if pg.page_index != 0:   # 0 == 'producao' porque foi registrada primeiro [web:18]
+    pg.run()             # executa 2_Qualidade.py quando selecionada [web:18]
 else:
-    st.set_page_config(layout="wide", page_title="Dashboard de Produção Tupacery")  # [web:22][web:15]
-    st.title("Dashboard de Produção - Peneiras Móveis Tupacery")
+    # Conteúdo da página Produção AQUI (sem pg.run())
+    st.set_page_config(layout="wide", page_title="Dashboard de Produção Tupacery")  # chame uma única vez nesta página [web:22][web:15]
+    # ... todo o restante do seu código grande segue abaixo ...
+
 
 import pandas as pd
 import plotly.express as px
