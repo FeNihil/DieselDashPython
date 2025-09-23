@@ -10,6 +10,17 @@ import base64
 from cryptography.fernet import Fernet
 import zipfile
 
+# ======================================================
+# Navegação por páginas com st.Page / st.navigation
+# ======================================================
+# Observação: ao usar st.navigation, defina explicitamente os caminhos das páginas;
+# é válido referenciar arquivos dentro de 'pages/' com caminho relativo. [web:15][web:18]
+
+producao_page = st.Page("1_Producao.py", title="Produção", icon="📊")          # arquivo na raiz [web:14][web:15]
+qualidade_page = st.Page("pages/2_Qualidade.py", title="Qualidade", icon="🔬")  # arquivo em pages/ [web:15][web:18]
+
+pg = st.navigation([producao_page, qualidade_page])  # crie a navegação uma única vez por execução [web:18]
+
 def is_valid_xlsx_bytes(b: bytes) -> bool:
     """
     Retorna True se os bytes representarem um arquivo ZIP válido,
