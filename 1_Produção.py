@@ -1,10 +1,13 @@
 import streamlit as st
+
+# =========================
+# Configuração de página
+# =========================
 st.set_page_config(layout="wide", page_title="Dashboard de Produção Tupacery")
-
-st.sidebar.page_link("1_Produção.py", label="Produção", icon="📊")
-st.sidebar.page_link("pages/2_Qualidade.py", label="Qualidade", icon="🔬")
-
-st.title("Dashboard de Produção - Peneiras Móveis Tupacery")
+st.markdown(
+    "<style>.kpi-card {background-color: #262626; padding: 1rem; border-radius: 0.5rem; border: 1px solid #444;}</style>",
+    unsafe_allow_html=True,
+)
 
 import pandas as pd
 import plotly.express as px
@@ -34,14 +37,7 @@ def is_valid_xlsx_bytes(b: bytes) -> bool:
     except Exception:
         return False
 
-# =========================
-# Configuração de página
-# =========================
-st.set_page_config(layout="wide", page_title="Dashboard de Produção Tupacery")
-st.markdown(
-    "<style>.kpi-card {background-color: #262626; padding: 1rem; border-radius: 0.5rem; border: 1px solid #444;}</style>",
-    unsafe_allow_html=True,
-)
+
 
 # =========================
 # Chave e Fernet via secrets
