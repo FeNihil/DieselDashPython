@@ -1,13 +1,16 @@
 import streamlit as st
 
-# =========================
-# Configuração de página
-# =========================
-st.set_page_config(layout="wide", page_title="Dashboard de Produção Tupacery")
-st.markdown(
-    "<style>.kpi-card {background-color: #262626; padding: 1rem; border-radius: 0.5rem; border: 1px solid #444;}</style>",
-    unsafe_allow_html=True,
-)
+producao = st.Page(__file__, title="Produção", icon="📊")  # aponta para o próprio arquivo
+qualidade = st.Page("pages/2_Qualidade.py", title="Qualidade", icon="🔬")
+pg = st.navigation([producao, qualidade])
+
+# Descobre a página selecionada sem reexecutar a atual
+if pg.page_path != __file__:
+    pg.run()  # executa a outra página
+else:
+    # Conteúdo da página Produção vai aqui (sem st.navigation dentro)
+    st.set_page_config(layout="wide", page_title="Dashboard de Produção Tupacery")
+    st.title("Dashboard de Produção - Peneiras Móveis Tupacery")
 
 import pandas as pd
 import plotly.express as px
