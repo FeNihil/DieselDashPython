@@ -24,7 +24,7 @@ def is_valid_xlsx_bytes(b: bytes) -> bool:
 # =========================
 # Configuração de página
 # =========================
-st.set_page_config(layout="wide", page_title="Dashboard de Produção Tuypacery")
+st.set_page_config(layout="wide", page_title="Dashboard de Produção Tupacery")
 st.markdown(
     "<style>.kpi-card {background-color: #262626; padding: 1rem; border-radius: 0.5rem; border: 1px solid #444;}</style>",
     unsafe_allow_html=True,
