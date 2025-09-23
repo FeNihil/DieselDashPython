@@ -9,13 +9,13 @@ import hashlib
 import base64
 from cryptography.fernet import Fernet
 import io
+import time
 
 ENCRYPTED_FILENAME = "Diesel-area.encrypted"
+ENCRYPTED_USERS_FILE = "users.encrypted"
+ADMIN_USERNAME = "admin"  # Usuário administrador fixo
 
 # --- Chave de Criptografia (Ofuscada) ---
-# A chave é dividida e transformada em várias partes para evitar
-# que seja facilmente identificada no código-fonte.
-
 # Busca da chave HEX salva nos segredos do Streamlit
 HEX_KEY_STRING = st.secrets["HEX_KEY_STRING"]
 
@@ -31,7 +31,6 @@ if HEX_KEY_STRING:
         st.error(f"❌ Erro na chave de criptografia. Verifique se a string hexadecimal está correta: {e}")
 else:
     st.error("❌ Chave de criptografia não encontrada nos segredos do Streamlit!")
-
 
 def decrypt_file_in_memory(file_path):
     """
@@ -55,6 +54,54 @@ def decrypt_file_in_memory(file_path):
         st.error(f"❌ Erro ao descriptografar o arquivo: {e}")
         return None
 
+# --- Funções de Criptografia para Usuários ---
+def encrypt_users_file(users_data):
+    """Criptografa e salva os dados dos usuários"""
+    if not fernet:
+        return False
+    
+    try:
+        # Converte o dicionário para JSON
+        json_data = json.dumps(users_data, indent=2, ensure_ascii=False)
+        # Converte para bytes
+        data_bytes = json_data.encode('utf-8')
+        # Criptografa
+        encrypted_data = fernet.encrypt(data_bytes)
+        
+        # Salva no arquivo criptografado
+        with open(ENCRYPTED_USERS_FILE, 'wb') as f:
+            f.write(encrypted_data)
+        
+        return True
+    except Exception as e:
+        st.error(f"Erro ao criptografar arquivo de usuários: {str(e)}")
+        return False
+
+def decrypt_users_file():
+    """Descriptografa e carrega os dados dos usuários"""
+    if not fernet:
+        return {}
+    
+    try:
+        if not os.path.exists(ENCRYPTED_USERS_FILE):
+            return {}
+        
+        with open(ENCRYPTED_USERS_FILE, 'rb') as f:
+            encrypted_data = f.read()
+        
+        # Descriptografa
+        decrypted_data = fernet.decrypt(encrypted_data)
+        # Converte de volta para JSON
+        json_data = decrypted_data.decode('utf-8')
+        users = json.loads(json_data)
+        
+        return users
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        st.error(f"Erro ao descriptografar arquivo de usuários: {str(e)}")
+        return {}
+
 # --- Funções de Utilitário ---
 def get_last_update_info():
     """Lê informações da última atualização do arquivo JSON"""
@@ -65,70 +112,147 @@ def get_last_update_info():
     except:
         return {"timestamp": 0, "last_update": "Não disponível"}
 
-# Função para carregar usuários do arquivo users.txt
+# --- Funções de Gerenciamento de Usuários ---
 def load_users():
-    users = {}
-    try:
-        if os.path.exists("users.txt"):
-            with open("users.txt", "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith("#"):
-                        parts = line.split(":")
-                        if len(parts) == 2:
-                            username, password_hash = parts
-                            users[username] = password_hash
-        else:
-            # Criar arquivo padrão se não existir
-            default_users = [
-                "# Arquivo de usuários - Formato: usuario:senha_hash",
-                "# Para gerar hash de senha, use: echo -n \"sua_senha\" | sha256sum",
-                "admin:5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
-                "lhg_user:ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f",
-                "expedicao:a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3"
-            ]
-            with open("users.txt", "w", encoding="utf-8") as f:
-                f.write("\n".join(default_users))
-            # Recarregar após criar o arquivo
-            return load_users()
-    except Exception as e:
-        st.error(f"Erro ao carregar usuários: {str(e)}")
-    
-    return users
+    """Carrega usuários do arquivo criptografado"""
+    return decrypt_users_file()
 
-# Função para hash da senha
+def save_users(users):
+    """Salva usuários no arquivo criptografado"""
+    return encrypt_users_file(users)
+
 def hash_password(password):
+    """Hash da senha usando SHA256"""
     return hashlib.sha256(str.encode(password)).hexdigest()
 
-# Função para verificar login
 def check_password(username, password):
+    """Verifica login do usuário"""
     users = load_users()
     if username in users:
-        return users[username] == hash_password(password)
+        return users[username]["password"] == hash_password(password)
     return False
 
-# Função para registrar log de acesso em arquivo TXT
+def is_admin(username):
+    """Verifica se o usuário é administrador"""
+    users = load_users()
+    return username in users and users[username].get("role") == "admin"
+
+def create_user(username, password, email, full_name, role="user"):
+    """Cria um novo usuário"""
+    users = load_users()
+    if username in users:
+        return False, "Usuário já existe"
+    
+    users[username] = {
+        "password": hash_password(password),
+        "role": role,
+        "email": email,
+        "full_name": full_name,
+        "created_at": datetime.now().isoformat(),
+        "last_login": None
+    }
+    
+    if save_users(users):
+        return True, "Usuário criado com sucesso"
+    else:
+        return False, "Erro ao salvar usuário"
+
+def update_user(username, email=None, full_name=None, role=None, new_password=None):
+    """Atualiza informações do usuário"""
+    users = load_users()
+    if username not in users:
+        return False, "Usuário não encontrado"
+    
+    if email:
+        users[username]["email"] = email
+    if full_name:
+        users[username]["full_name"] = full_name
+    if role:
+        users[username]["role"] = role
+    if new_password:
+        users[username]["password"] = hash_password(new_password)
+    
+    if save_users(users):
+        return True, "Usuário atualizado com sucesso"
+    else:
+        return False, "Erro ao salvar alterações"
+
+def delete_user(username):
+    """Remove usuário (não pode remover admin ou usuário atual)"""
+    if username == ADMIN_USERNAME:
+        return False, "Não é possível remover o usuário administrador"
+    
+    current_user = st.session_state.get('username')
+    if username == current_user:
+        return False, "Não é possível remover seu próprio usuário"
+    
+    users = load_users()
+    if username not in users:
+        return False, "Usuário não encontrado"
+    
+    del users[username]
+    
+    if save_users(users):
+        return True, "Usuário removido com sucesso"
+    else:
+        return False, "Erro ao remover usuário"
+
+def change_password(username, old_password, new_password):
+    """Permite que o usuário altere sua própria senha"""
+    users = load_users()
+    if username not in users:
+        return False, "Usuário não encontrado"
+    
+    if users[username]["password"] != hash_password(old_password):
+        return False, "Senha atual incorreta"
+    
+    users[username]["password"] = hash_password(new_password)
+    
+    if save_users(users):
+        return True, "Senha alterada com sucesso"
+    else:
+        return False, "Erro ao alterar senha"
+
+def update_last_login(username):
+    """Atualiza o timestamp do último login"""
+    users = load_users()
+    if username in users:
+        users[username]["last_login"] = datetime.now().isoformat()
+        save_users(users)
+
 def log_access(username, action="login"):
+    """Registra log de acesso em arquivo TXT"""
     try:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = f"{timestamp} | {username} | {action}\n"
         
-        # Salvar no arquivo access_logs.txt
         with open("access_logs.txt", "a", encoding="utf-8") as f:
             f.write(log_entry)
-            
     except Exception as e:
         st.error(f"Erro ao registrar log: {str(e)}")
 
-# Função de login
+# --- Interface de Login ---
 def login_form():
     st.title("🔐 Login - Dashboard LHG Logística")
     st.markdown("---")
     
-    # Informações de login para teste
-    with st.expander("ℹ️ Credenciais de Teste"):
-        st.write("**Usuários disponíveis:**")
-        st.write("- **admin** / admin")
+    # Opções de acesso
+    access_mode = st.radio(
+        "Selecione o modo de acesso:",
+        ["Login Normal", "Painel de Usuários", "Alterar Senha"],
+        horizontal=True
+    )
+    
+    if access_mode == "Login Normal":
+        normal_login()
+    elif access_mode == "Painel de Usuários":
+        admin_login()
+    else:
+        password_change_form()
+
+def normal_login():
+    """Formulário de login normal"""
+    st.subheader("Acesso ao Dashboard")
     
     with st.form("login_form"):
         username = st.text_input("Usuário")
@@ -136,15 +260,277 @@ def login_form():
         submit_button = st.form_submit_button("Entrar")
         
         if submit_button:
-            if check_password(username, password):
-                st.session_state.authenticated = True
-                st.session_state.username = username
-                log_access(username, "login")
-                st.success("Login realizado com sucesso!")
-                st.rerun()
+            if username and password:
+                if check_password(username, password):
+                    st.session_state.authenticated = True
+                    st.session_state.username = username
+                    st.session_state.is_admin = is_admin(username)
+                    st.session_state.access_mode = "dashboard"
+                    update_last_login(username)
+                    log_access(username, "login")
+                    st.success("Login realizado com sucesso!")
+                    st.rerun()
+                else:
+                    st.error("Usuário ou senha incorretos!")
+                    log_access(username, "failed_login")
             else:
-                st.error("Usuário ou senha incorretos!")
-                log_access(username, "failed_login")
+                st.warning("Preencha todos os campos!")
+
+def admin_login():
+    """Formulário de login para painel administrativo"""
+    st.subheader("Painel Administrativo")
+    st.warning("⚠️ Acesso restrito apenas para administradores")
+    
+    with st.form("admin_login_form"):
+        username = st.text_input("Usuário Administrador")
+        password = st.text_input("Senha", type="password")
+        submit_button = st.form_submit_button("Acessar Painel")
+        
+        if submit_button:
+            if username and password:
+                if check_password(username, password) and is_admin(username):
+                    st.session_state.authenticated = True
+                    st.session_state.username = username
+                    st.session_state.is_admin = True
+                    st.session_state.access_mode = "admin_panel"
+                    update_last_login(username)
+                    log_access(username, "admin_login")
+                    st.success("Acesso ao painel administrativo autorizado!")
+                    st.rerun()
+                else:
+                    st.error("Credenciais inválidas ou usuário sem privilégios administrativos!")
+                    log_access(username, "failed_admin_login")
+            else:
+                st.warning("Preencha todos os campos!")
+
+def password_change_form():
+    """Formulário para alteração de senha"""
+    st.subheader("Alterar Senha")
+    st.info("Qualquer usuário pode alterar sua própria senha aqui")
+    
+    with st.form("password_change_form"):
+        username = st.text_input("Usuário")
+        old_password = st.text_input("Senha Atual", type="password")
+        new_password = st.text_input("Nova Senha", type="password")
+        confirm_password = st.text_input("Confirmar Nova Senha", type="password")
+        submit_button = st.form_submit_button("Alterar Senha")
+        
+        if submit_button:
+            if not all([username, old_password, new_password, confirm_password]):
+                st.warning("Preencha todos os campos!")
+            elif new_password != confirm_password:
+                st.error("As senhas não coincidem!")
+            elif len(new_password) < 4:
+                st.error("A nova senha deve ter pelo menos 4 caracteres!")
+            else:
+                success, message = change_password(username, old_password, new_password)
+                if success:
+                    st.success(message)
+                    log_access(username, "password_change")
+                    st.info("Redirecionando para o login...")
+                    time.sleep(2)
+                    st.rerun()
+                else:
+                    st.error(message)
+
+# --- Painel Administrativo ---
+def admin_panel():
+    """Painel de administração de usuários"""
+    st.title("👨‍💼 Painel de Administração")
+    st.markdown("---")
+    
+    # Header com informações do admin
+    col1, col2, col3 = st.columns([2, 2, 1])
+    with col1:
+        st.info(f"Administrador: {st.session_state.username}")
+    with col2:
+        users = load_users()
+        st.info(f"Total de usuários: {len(users)}")
+    with col3:
+        if st.button("🚪 Logout"):
+            log_access(st.session_state.username, "logout")
+            for key in ['authenticated', 'username', 'is_admin', 'access_mode']:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.rerun()
+    
+    # Tabs do painel
+    tab1, tab2, tab3 = st.tabs(["👥 Gerenciar Usuários", "➕ Criar Usuário", "📊 Logs de Acesso"])
+    
+    with tab1:
+        user_management_tab()
+    
+    with tab2:
+        create_user_tab()
+    
+    with tab3:
+        access_logs_tab()
+
+def user_management_tab():
+    """Tab de gerenciamento de usuários"""
+    st.subheader("Lista de Usuários")
+    
+    users = load_users()
+    if not users:
+        st.warning("Nenhum usuário encontrado.")
+        return
+    
+    # Criar DataFrame para exibição
+    user_data = []
+    for username, info in users.items():
+        user_data.append({
+            "Usuário": username,
+            "Nome Completo": info.get("full_name", "N/A"),
+            "Email": info.get("email", "N/A"),
+            "Função": info.get("role", "user"),
+            "Criado em": info.get("created_at", "N/A")[:19],
+            "Último Login": info.get("last_login", "Nunca")[:19] if info.get("last_login") else "Nunca"
+        })
+    
+    df_users = pd.DataFrame(user_data)
+    st.dataframe(df_users, use_container_width=True)
+    
+    # Seção de edição
+    st.markdown("### ✏️ Editar Usuário")
+    
+    selected_user = st.selectbox(
+        "Selecione o usuário para editar:",
+        options=list(users.keys()),
+        index=None,
+        placeholder="Escolha um usuário..."
+    )
+    
+    if selected_user:
+        user_info = users[selected_user]
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            with st.form(f"edit_user_{selected_user}"):
+                st.write(f"**Editando: {selected_user}**")
+                
+                new_email = st.text_input("Email:", value=user_info.get("email", ""))
+                new_full_name = st.text_input("Nome Completo:", value=user_info.get("full_name", ""))
+                new_role = st.selectbox("Função:", ["user", "admin"], 
+                                      index=0 if user_info.get("role") == "user" else 1)
+                new_password = st.text_input("Nova Senha (deixe em branco para não alterar):", 
+                                           type="password")
+                
+                col_update, col_delete = st.columns(2)
+                
+                with col_update:
+                    update_button = st.form_submit_button("💾 Atualizar", type="primary")
+                
+                with col_delete:
+                    delete_button = st.form_submit_button("🗑️ Excluir", type="secondary")
+                
+                if update_button:
+                    success, message = update_user(
+                        selected_user, 
+                        email=new_email if new_email else None,
+                        full_name=new_full_name if new_full_name else None,
+                        role=new_role,
+                        new_password=new_password if new_password else None
+                    )
+                    if success:
+                        st.success(message)
+                        log_access(st.session_state.username, f"updated_user_{selected_user}")
+                        st.rerun()
+                    else:
+                        st.error(message)
+                
+                if delete_button:
+                    success, message = delete_user(selected_user)
+                    if success:
+                        st.success(message)
+                        log_access(st.session_state.username, f"deleted_user_{selected_user}")
+                        st.rerun()
+                    else:
+                        st.error(message)
+        
+        with col2:
+            # Informações do usuário selecionado
+            st.write("### 📋 Informações do Usuário")
+            st.write(f"**Usuário:** {selected_user}")
+            st.write(f"**Email:** {user_info.get('email', 'N/A')}")
+            st.write(f"**Nome:** {user_info.get('full_name', 'N/A')}")
+            st.write(f"**Função:** {user_info.get('role', 'user')}")
+            st.write(f"**Criado:** {user_info.get('created_at', 'N/A')[:19]}")
+            st.write(f"**Último Login:** {user_info.get('last_login', 'Nunca')[:19] if user_info.get('last_login') else 'Nunca'}")
+
+def create_user_tab():
+    """Tab de criação de usuário"""
+    st.subheader("Criar Novo Usuário")
+    
+    with st.form("create_user_form"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            new_username = st.text_input("Usuário*:")
+            new_password = st.text_input("Senha*:", type="password")
+            new_role = st.selectbox("Função:", ["user", "admin"])
+        
+        with col2:
+            new_email = st.text_input("Email:")
+            new_full_name = st.text_input("Nome Completo:")
+            confirm_password = st.text_input("Confirmar Senha*:", type="password")
+        
+        create_button = st.form_submit_button("➕ Criar Usuário", type="primary")
+        
+        if create_button:
+            if not all([new_username, new_password, confirm_password]):
+                st.error("Preencha todos os campos obrigatórios!")
+            elif new_password != confirm_password:
+                st.error("As senhas não coincidem!")
+            elif len(new_password) < 4:
+                st.error("A senha deve ter pelo menos 4 caracteres!")
+            else:
+                success, message = create_user(
+                    new_username, 
+                    new_password, 
+                    new_email or f"{new_username}@lhg.com",
+                    new_full_name or new_username,
+                    new_role
+                )
+                if success:
+                    st.success(message)
+                    log_access(st.session_state.username, f"created_user_{new_username}")
+                    st.rerun()
+                else:
+                    st.error(message)
+
+def access_logs_tab():
+    """Tab de visualização dos logs de acesso"""
+    st.subheader("Logs de Acesso")
+    
+    if os.path.exists("access_logs.txt"):
+        try:
+            with open("access_logs.txt", "r", encoding="utf-8") as f:
+                logs = f.readlines()
+            
+            if logs:
+                # Mostrar apenas os últimos 100 logs
+                recent_logs = logs[-100:]
+                recent_logs.reverse()  # Mais recentes primeiro
+                
+                st.text_area(
+                    "Últimos 100 registros (mais recentes primeiro):",
+                    value="\n".join(recent_logs),
+                    height=400
+                )
+                
+                # Botão para limpar logs
+                if st.button("🗑️ Limpar Logs"):
+                    with open("access_logs.txt", "w", encoding="utf-8") as f:
+                        f.write("")
+                    st.success("Logs limpos com sucesso!")
+                    st.rerun()
+            else:
+                st.info("Nenhum log de acesso encontrado.")
+        except Exception as e:
+            st.error(f"Erro ao ler logs: {str(e)}")
+    else:
+        st.info("Arquivo de logs não encontrado.")
 
 @st.cache_data
 def load_and_preprocess_data(file_path, start_date, end_date, cache_key):
