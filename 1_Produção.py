@@ -1,15 +1,14 @@
 import streamlit as st
 
-producao = st.Page(__file__, title="Produção", icon="📊")  # aponta para o próprio arquivo
-qualidade = st.Page("pages/2_Qualidade.py", title="Qualidade", icon="🔬")
-pg = st.navigation([producao, qualidade])
+producao = st.Page(__file__, title="Produção", icon="📊")                          # [web:15]
+qualidade = st.Page("pages/2_Qualidade.py", title="Qualidade", icon="🔬")         # [web:15]
+pg = st.navigation([producao, qualidade])                                         # [web:18]
 
-# Descobre a página selecionada sem reexecutar a atual
-if pg.page_path != __file__:
-    pg.run()  # executa a outra página
+# pg.page retorna a Page ativa; compare com 'producao'
+if pg.page is not producao:   # quando outra página for selecionada, delegue [web:18]
+    pg.run()                  # executa a outra página (Qualidade) [web:18]
 else:
-    # Conteúdo da página Produção vai aqui (sem st.navigation dentro)
-    st.set_page_config(layout="wide", page_title="Dashboard de Produção Tupacery")
+    st.set_page_config(layout="wide", page_title="Dashboard de Produção Tupacery")  # [web:22][web:15]
     st.title("Dashboard de Produção - Peneiras Móveis Tupacery")
 
 import pandas as pd
