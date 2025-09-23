@@ -544,6 +544,7 @@ def access_logs_tab():
     else:
         st.info("Arquivo de logs não encontrado.")
 
+# --- Funções do Dashboard (mantenha todas as funções originais aqui) ---
 @st.cache_data
 def load_and_preprocess_data(file_path, start_date, end_date, cache_key):
     try:
@@ -794,12 +795,8 @@ PRIMARY_COLOR = "#FF6600"
 SECONDARY_COLOR = "#808080"
 
 # --- Interface Principal ---
-def main():
-    # Verificar autenticação
-    if not st.session_state.get('authenticated', False):
-        login_form()
-        return
-    
+def dashboard_main():
+    """Função principal do dashboard"""
     # Pega informações da última atualização
     update_info = get_last_update_info()
     
@@ -816,15 +813,26 @@ def main():
     with col3:
         if st.button("🚪 Logout"):
             log_access(st.session_state.username, "logout")
-            st.session_state.authenticated = False
-            st.session_state.username = None
+            for key in ['authenticated', 'username', 'is_admin', 'access_mode']:
+                if key in st.session_state:
+                    del st.session_state[key]
             st.rerun()
 
     # Sidebar para configurações
     st.sidebar.header("📋 Configurações")
     st.sidebar.info(f"Usuário: {st.session_state.get('username', 'Desconhecido')}")
     st.sidebar.info(f"🔄 Última atualização: {update_info.get('last_update', 'N/A')[:19]}")
+    
+    # Botão para acessar painel admin (se for admin)
+    if st.session_state.get('is_admin', False):
+        st.sidebar.header("👨‍💼 Administração")
+        if st.sidebar.button("Painel Administrativo"):
+            st.session_state.access_mode = "admin_panel"
+            st.rerun()
 
+    # Resto do dashboard (filtros, gráficos, etc.) - continua igual...
+    # [O resto do código do dashboard permanece o mesmo]
+    
     # Filtros de data na sidebar
     st.sidebar.header("📅 Filtros de Data")
     
@@ -1049,6 +1057,22 @@ def main():
     if st.sidebar.button("🔄 Forçar Atualização"):
         st.cache_data.clear()
         st.rerun()
+
+def main():
+    # Verificar autenticação
+    if not st.session_state.get('authenticated', False):
+        login_form()
+        return
+    
+    # Verificar modo de acesso
+    access_mode = st.session_state.get('access_mode', 'dashboard')
+    
+    if access_mode == "admin_panel":
+        admin_panel()
+        return
+    
+    # Dashboard principal
+    dashboard_main()
 
 if __name__ == "__main__":
     main()
