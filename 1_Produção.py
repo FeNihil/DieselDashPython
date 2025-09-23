@@ -1,10 +1,19 @@
 import streamlit as st
 
-producao = st.Page(__file__, title="Produção", icon="📊", default=True)  # principal como padrão [web:15]
-qualidade = st.Page("pages/2_Qualidade.py", title="Qualidade", icon="🔬")  # subpágina [web:15]
+producao = st.Page(__file__, title="Produção", icon="📊")                   # [web:15]
+qualidade = st.Page("pages/2_Qualidade.py", title="Qualidade", icon="🔬")  # [web:15]
+pg = st.navigation([producao, qualidade])                                   # [web:18]
 
-pg = st.navigation([producao, qualidade])  # sem condicionais [web:18]
-pg.run()  # o runtime executa só a página ativa; não há loop recursivo [web:18]
+# Heurística: quando a URL tiver ?page=qualidade (ou outro path), delegue; caso contrário, rode Produção.
+qp = st.query_params  # API pública [web:20]
+current = qp.get("page", [""])[0] if isinstance(qp.get("page"), list) else qp.get("page", "")
+# Ajuste 'qualidade' para o url_path configurado; se não definiu url_path na Page, o Streamlit gera um automaticamente. [web:18]
+if current and "qualidade" in str(current).lower():
+    pg.run()  # executa a subpágina [web:18]
+else:
+    # Conteúdo da Produção aqui
+    st.set_page_config(layout="wide", page_title="Dashboard de Produção Tupacery")  # uma vez na página [web:22][web:15]
+    # ... restante do seu código ...
 
 
 import pandas as pd
