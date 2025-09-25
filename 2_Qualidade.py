@@ -256,11 +256,25 @@ st.subheader(f"📊 Resultados do Último Dia ({produto_dia_str})")
 
 def render_metrics(df, pmt, title):
     st.markdown(f"### 🏭 {title}")
-    cols = st.columns(6)
-    metrics = [('Fe', fmt_pct), ('SiO₂', fmt_pct), ('Al₂O₃', fmt_pct), ('TMP', lambda x: fmt_med(x, 'mm')), ('>31,5mm', fmt_pct), ('<12mm', fmt_pct)]
-    indices = ['Fe', 'SiO2', 'Al2O3', 'TMP', '>31_5mm', '<0_15mm']
-    for i, ((label, fmt_func), idx) in enumerate(zip(metrics, indices)):
-        with cols[i]: st.metric(label, fmt_func(df.loc[idx, pmt] if idx in df.index else None))
+    with st.container():
+        # Linha 1 - Fe, SiO2, Al2O3
+        cols1 = st.columns(3)
+        for col, (label, idx) in zip(cols1, [('Fe', 'Fe'), ('SiO₂', 'SiO2'), ('Al₂O₃', 'Al2O3')]):
+            with col:
+                val = df.loc[idx, pmt] if idx in df.index else None
+                st.metric(label, fmt_pct(val))
+        
+        # Linha 2 - TMP, >31,5mm, <12mm
+        cols2 = st.columns(3)
+        for col, (label, idx, fmt_func) in zip(
+            cols2,
+            [('TMP', 'TMP', lambda x: fmt_med(x, 'mm')), 
+             ('>31,5mm', '>31_5mm', fmt_pct), 
+             ('<12mm', '<0_15mm', fmt_pct)]
+        ):
+            with col:
+                val = df.loc[idx, pmt] if idx in df.index else None
+                st.metric(label, fmt_func(val))
 
 col1, col2 = st.columns(2)
 with col1: render_metrics(df_dia, 'PMT 01', 'PMT 01 - TUPACERY')
