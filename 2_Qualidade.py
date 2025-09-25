@@ -646,46 +646,40 @@ if isinstance(df_boxplot, pd.DataFrame) and not df_boxplot.empty:
     )
 
     if indicador_selecionado:
+        # Converter e filtrar: dropna e remover zeros
         df_boxplot[indicador_selecionado] = pd.to_numeric(df_boxplot[indicador_selecionado], errors='coerce')
-        df_plot = df_boxplot.dropna(subset=[indicador_selecionado])
+        df_plot = df_boxplot.dropna(subset=[indicador_selecionado, 'Data']).copy()
+        df_plot = df_plot[df_plot[indicador_selecionado] != 0]  # ignora zeros
 
         if not df_plot.empty:
-            # Criar gráfico boxplot
             fig_boxplot = px.box(
                 df_plot,
                 x='Peneira',
                 y=indicador_selecionado,
                 color='Peneira',
-                points="outliers",
-                title=f"📊 Distribuição de {indicador_selecionado} por Peneira - {mes_referencia}"
+                points=False,  # opcional: oculta pontos/outliers
+                title=f"📊 Distribuição de {indicador_selecionado} por Peneira - {st.session_state['mes_referencia']}"
             )
-
-            # Customizar layout do gráfico
             fig_boxplot.update_layout(
                 template='plotly_white',
                 font=dict(size=12),
                 title_font=dict(size=16),
                 showlegend=True,
-                height=500
+                height=500,
+                yaxis=dict(zeroline=False)  # opcional: remove linha em 0
             )
-
             fig_boxplot.update_yaxes(
                 tickformat=',.2f',
                 title=f"{indicador_selecionado} ({'%' if indicador_selecionado in ['Fe', 'SiO2', 'Al2O3', '>31_5mm', '<0_15mm'] else 'mm' if indicador_selecionado == 'TMP' else ''})"
             )
-
             st.plotly_chart(fig_boxplot, use_container_width=True)
 
-            # Estatísticas descritivas
-            def filter_zeros_for_analysis(df, column):
-                """Filtrar valores zero para análises estatísticas"""
-                return df[df[column] > 0][column]
-
+            # Estatísticas descritivas (já sem zeros)
             col1, col2 = st.columns(2)
 
             with col1:
                 st.markdown("#### 📈 Estatísticas - PMT 01")
-                pmt01_data_filtered = filter_zeros_for_analysis(df_plot[df_plot['Peneira'] == 'PMT 01'], indicador_selecionado)
+                pmt01_data_filtered = df_plot.loc[df_plot['Peneira']=='PMT 01', indicador_selecionado]
                 if not pmt01_data_filtered.empty:
                     st.write(f"**Média:** {format_brazilian_number(pmt01_data_filtered.mean())}")
                     st.write(f"**Mediana:** {format_brazilian_number(pmt01_data_filtered.median())}")
@@ -697,7 +691,7 @@ if isinstance(df_boxplot, pd.DataFrame) and not df_boxplot.empty:
 
             with col2:
                 st.markdown("#### 📈 Estatísticas - PMT 02")
-                pmt02_data_filtered = filter_zeros_for_analysis(df_plot[df_plot['Peneira'] == 'PMT 02'], indicador_selecionado)
+                pmt02_data_filtered = df_plot.loc[df_plot['Peneira']=='PMT 02', indicador_selecionado]
                 if not pmt02_data_filtered.empty:
                     st.write(f"**Média:** {format_brazilian_number(pmt02_data_filtered.mean())}")
                     st.write(f"**Mediana:** {format_brazilian_number(pmt02_data_filtered.median())}")
