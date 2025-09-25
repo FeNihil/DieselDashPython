@@ -6,7 +6,6 @@ Baseado na estrutura do 1_Producao.py para consistência
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 from datetime import datetime
 from PIL import Image
 import os
@@ -16,6 +15,18 @@ from cryptography.fernet import Fernet
 import zipfile
 import re
 import unicodedata
+
+# =========================
+# Inicialização segura do Session State (evita KeyError)
+# =========================
+if 'mes_referencia' not in st.session_state:
+    st.session_state['mes_referencia'] = None
+if 'df_boxplot' not in st.session_state:
+    st.session_state['df_boxplot'] = None
+if 'df_qualidade_dia' not in st.session_state:
+    st.session_state['df_qualidade_dia'] = None
+if 'df_qualidade_media' not in st.session_state:
+    st.session_state['df_qualidade_media'] = None
 
 def is_valid_xlsx_bytes(b: bytes) -> bool:
     """
@@ -32,11 +43,7 @@ def is_valid_xlsx_bytes(b: bytes) -> bool:
 # Configuração de página
 # =========================
 st.set_page_config(layout="wide", page_title="Dashboard de Qualidade Tupacery")
-
-st.markdown(
-    "",
-    unsafe_allow_html=True,
-)
+st.markdown("", unsafe_allow_html=True)
 
 # =========================
 # Chave e Fernet via secrets
@@ -137,28 +144,22 @@ def ler_bytes_arquivo_local(caminho: str) -> bytes | None:
     if not os.path.exists(caminho):
         return None
     try:
-        # Obtém informações do arquivo para verificar se mudou
         stat_info = os.stat(caminho)
         file_size = stat_info.st_size
         file_mtime = stat_info.st_mtime
 
-        # Cria uma chave única baseada no arquivo
         cache_key = f"{caminho}_{file_size}_{file_mtime}"
 
-        # Verifica se já temos este arquivo em cache
         if 'file_cache_qualidade' not in st.session_state:
             st.session_state['file_cache_qualidade'] = {}
 
         if cache_key in st.session_state['file_cache_qualidade']:
             return st.session_state['file_cache_qualidade'][cache_key]
 
-        # Lê o arquivo
         with open(caminho, "rb") as f:
             file_bytes = f.read()
 
-        # Limpa cache antigo e salva o novo
         st.session_state['file_cache_qualidade'] = {cache_key: file_bytes}
-
         return file_bytes
     except Exception as e:
         st.error(f"Erro ao ler arquivo {caminho}: {e}")
@@ -198,9 +199,7 @@ def detect_data_blocks(df_raw: pd.DataFrame):
     try:
         lvl1 = df_raw.columns.get_level_values(1).tolist()
         lvl1_norm = [normalize_text(x) if not pd.isna(x) else '' for x in lvl1]
-
         start_idxs = [i for i, v in enumerate(lvl1_norm) if 'data' in v]
-
         if len(start_idxs) >= 2:
             blocks = []
             for i, s in enumerate(start_idxs):
@@ -209,14 +208,11 @@ def detect_data_blocks(df_raw: pd.DataFrame):
             return blocks[:2]
     except Exception:
         pass
-
-    # Fallback para índices conhecidos
     return [(260, 267), (709, 716)]
 
 def process_dataframe_block(df_block: pd.DataFrame) -> pd.DataFrame:
     """Processar um bloco de dados"""
     df_block = flatten_multiindex_columns(df_block)
-
     df_block.rename(columns={c: map_column_name(c) for c in df_block.columns}, inplace=True)
 
     # Remover duplicatas de colunas
@@ -261,9 +257,9 @@ def carregar_excel_qualidade_em_df(excel_bytes: bytes) -> tuple:
     """Carregar e processar dados de qualidade"""
     try:
         df_raw = pd.read_excel(
-            io.BytesIO(excel_bytes), 
-            sheet_name=NOME_ABA_QUALIDADE, 
-            header=[0, 1], 
+            io.BytesIO(excel_bytes),
+            sheet_name=NOME_ABA_QUALIDADE,
+            header=[0, 1],
             nrows=34,
             engine='openpyxl'
         )
@@ -274,7 +270,6 @@ def carregar_excel_qualidade_em_df(excel_bytes: bytes) -> tuple:
         # Processar blocos PMT 01 e PMT 02
         s1, e1 = blocks[0]
         s2, e2 = blocks[1]
-
         df_pmt01 = process_dataframe_block(df_raw.iloc[:, s1:e1+1].copy())
         df_pmt02 = process_dataframe_block(df_raw.iloc[:, s2:e2+1].copy())
 
@@ -284,13 +279,11 @@ def carregar_excel_qualidade_em_df(excel_bytes: bytes) -> tuple:
                 mask = pd.to_numeric(df_block['Ton'], errors='coerce').fillna(0) > 0
                 if mask.any():
                     return df_block.loc[mask, 'Data'].max()
-
             numeric_cols = [c for c in df_block.columns if c != 'Data']
             if numeric_cols:
                 mask = df_block[numeric_cols].notna().any(axis=1)
                 if mask.any():
                     return df_block.loc[mask, 'Data'].max()
-
             return df_block['Data'].dropna().max() if df_block['Data'].notna().any() else pd.NaT
 
         last1 = find_last_valid_date(df_pmt01)
@@ -313,7 +306,6 @@ def carregar_excel_qualidade_em_df(excel_bytes: bytes) -> tuple:
                     return df_block.loc[mask].iloc[0].drop(labels='Data')
             except Exception:
                 pass
-
             if 'Ton' in df_block.columns:
                 try:
                     mask = pd.to_numeric(df_block['Ton'], errors='coerce').fillna(0) > 0
@@ -321,12 +313,10 @@ def carregar_excel_qualidade_em_df(excel_bytes: bytes) -> tuple:
                         return df_block.loc[mask].iloc[-1].drop(labels='Data')
                 except Exception:
                     pass
-
             numeric_cols = [c for c in df_block.columns if c != 'Data']
             mask = df_block[numeric_cols].notna().any(axis=1)
             if mask.any():
                 return df_block.loc[mask].iloc[-1].drop(labels='Data')
-
             return pd.Series([pd.NA] * len(numeric_cols), index=numeric_cols)
 
         row_pmt01 = get_data_for_date(df_pmt01, ultimo_dia)
@@ -339,11 +329,10 @@ def carregar_excel_qualidade_em_df(excel_bytes: bytes) -> tuple:
                 row_pmt01.get(indicador, pd.NA),
                 row_pmt02.get(indicador, pd.NA)
             ]
-
         dia = pd.DataFrame(dia_data, index=['PMT 01', 'PMT 02']).T
         dia.loc['PRODUTO_DIA'] = [ultimo_dia, ultimo_dia]
 
-        # Calcular médias mensais
+        # Calcular médias mensais: excluir nulos e zeros
         def calc_monthly_mean(df_block):
             if 'Ton' in df_block.columns:
                 productive_mask = pd.to_numeric(df_block['Ton'], errors='coerce').fillna(0) > 0
@@ -351,7 +340,6 @@ def carregar_excel_qualidade_em_df(excel_bytes: bytes) -> tuple:
             else:
                 numeric_cols = [c for c in df_block.columns if c != 'Data']
                 subset = df_block[df_block[numeric_cols].notna().any(axis=1)]
-
             means = {}
             for indicador in indicadores_padrao:
                 if indicador in subset.columns:
@@ -372,7 +360,6 @@ def carregar_excel_qualidade_em_df(excel_bytes: bytes) -> tuple:
         df_pmt01_box['Peneira'] = 'PMT 01'
         df_pmt02_box = df_pmt02.copy()
         df_pmt02_box['Peneira'] = 'PMT 02'
-
         boxplot_data = pd.concat([df_pmt01_box, df_pmt02_box], ignore_index=True)
         boxplot_data = boxplot_data[boxplot_data['Data'].notna()].reset_index(drop=True)
 
@@ -408,7 +395,7 @@ st.title("Dashboard de Qualidade - Peneiras Móveis Tupacery")
 st.markdown("---")
 
 # =========================
-# Entrada de dados: prioriza arquivo no repo; fallback uploader
+# Entrada de dados
 # =========================
 def carregar_dados_qualidade_automaticamente() -> tuple:
     """
@@ -426,7 +413,6 @@ def carregar_dados_qualidade_automaticamente() -> tuple:
         if plain_bytes:
             resultado = carregar_excel_qualidade_em_df(plain_bytes)
             if resultado[0] is not None:
-                # Mostra informação sobre a última atualização
                 try:
                     stat_info = os.stat(NOME_ARQUIVO_QUALIDADE_SALVO)
                     ultima_modificacao = datetime.fromtimestamp(stat_info.st_mtime)
@@ -482,6 +468,12 @@ if df_qualidade_dia is None:
     st.error("❌ Não foi possível carregar os dados de qualidade. Verifique o arquivo criptografado e a chave em secrets.")
     st.stop()
 
+# Persistir em session_state para uso seguro em todo o app
+st.session_state['df_qualidade_dia'] = df_qualidade_dia
+st.session_state['df_qualidade_media'] = df_qualidade_media
+st.session_state['df_boxplot'] = df_boxplot
+st.session_state['mes_referencia'] = mes_referencia
+
 # =========================
 # Sidebar de metas
 # =========================
@@ -523,8 +515,6 @@ col1, col2 = st.columns(2)
 # PMT 01
 with col1:
     st.markdown("### 🏭 PMT 01 - TUPACERY")
-
-    # Métricas químicas
     subcol1, subcol2, subcol3 = st.columns(3)
     with subcol1:
         fe_val = df_qualidade_dia.loc['Fe', 'PMT 01'] if 'Fe' in df_qualidade_dia.index else None
@@ -536,7 +526,6 @@ with col1:
         al2o3_val = df_qualidade_dia.loc['Al2O3', 'PMT 01'] if 'Al2O3' in df_qualidade_dia.index else None
         st.metric("Al₂O₃", format_percentage(al2o3_val))
 
-    # Métricas físicas
     subcol4, subcol5, subcol6 = st.columns(3)
     with subcol4:
         tmp_val = df_qualidade_dia.loc['TMP', 'PMT 01'] if 'TMP' in df_qualidade_dia.index else None
@@ -551,8 +540,6 @@ with col1:
 # PMT 02
 with col2:
     st.markdown("### 🏭 PMT 02 - TUPACERY")
-
-    # Métricas químicas
     subcol1, subcol2, subcol3 = st.columns(3)
     with subcol1:
         fe_val = df_qualidade_dia.loc['Fe', 'PMT 02'] if 'Fe' in df_qualidade_dia.index else None
@@ -564,7 +551,6 @@ with col2:
         al2o3_val = df_qualidade_dia.loc['Al2O3', 'PMT 02'] if 'Al2O3' in df_qualidade_dia.index else None
         st.metric("Al₂O₃", format_percentage(al2o3_val))
 
-    # Métricas físicas
     subcol4, subcol5, subcol6 = st.columns(3)
     with subcol4:
         tmp_val = df_qualidade_dia.loc['TMP', 'PMT 02'] if 'TMP' in df_qualidade_dia.index else None
@@ -583,10 +569,8 @@ st.subheader("📈 Média Geral do Mês")
 
 col1, col2 = st.columns(2)
 
-# PMT 01 - Média
 with col1:
     st.markdown("### 🏭 PMT 01 - TUPACERY")
-
     subcol1, subcol2, subcol3 = st.columns(3)
     with subcol1:
         fe_media = df_qualidade_media.loc['Fe', 'PMT 01'] if 'Fe' in df_qualidade_media.index else None
@@ -609,10 +593,8 @@ with col1:
         abaixo015_media = df_qualidade_media.loc['<0_15mm', 'PMT 01'] if '<0_15mm' in df_qualidade_media.index else None
         st.metric("<0,15mm (Média)", format_percentage(abaixo015_media))
 
-# PMT 02 - Média
 with col2:
     st.markdown("### 🏭 PMT 02 - TUPACERY")
-
     subcol1, subcol2, subcol3 = st.columns(3)
     with subcol1:
         fe_media = df_qualidade_media.loc['Fe', 'PMT 02'] if 'Fe' in df_qualidade_media.index else None
@@ -642,7 +624,6 @@ st.subheader("📊 Distribuição e Consistência da Qualidade no Mês")
 
 if isinstance(df_boxplot, pd.DataFrame) and not df_boxplot.empty:
     indicadores_disponiveis = ['Fe', 'SiO2', 'Al2O3', 'TMP', '>31_5mm', '<0_15mm']
-
     indicador_selecionado = st.selectbox(
         "🎯 Selecione um Indicador para Análise Detalhada",
         options=indicadores_disponiveis
@@ -655,13 +636,14 @@ if isinstance(df_boxplot, pd.DataFrame) and not df_boxplot.empty:
         df_plot = df_plot[df_plot[indicador_selecionado] != 0]  # ignora zeros
 
         if not df_plot.empty:
+            mes_ref = st.session_state.get('mes_referencia', mes_referencia) or 'N/D'
             fig_boxplot = px.box(
                 df_plot,
                 x='Peneira',
                 y=indicador_selecionado,
                 color='Peneira',
                 points=False,  # opcional: oculta pontos/outliers
-                title=f"📊 Distribuição de {indicador_selecionado} por Peneira - {st.session_state['mes_referencia']}"
+                title=f"📊 Distribuição de {indicador_selecionado} por Peneira - {mes_ref}"
             )
             fig_boxplot.update_layout(
                 template='plotly_white',
@@ -679,10 +661,9 @@ if isinstance(df_boxplot, pd.DataFrame) and not df_boxplot.empty:
 
             # Estatísticas descritivas (já sem zeros)
             col1, col2 = st.columns(2)
-
             with col1:
                 st.markdown("#### 📈 Estatísticas - PMT 01")
-                pmt01_data_filtered = df_plot.loc[df_plot['Peneira']=='PMT 01', indicador_selecionado]
+                pmt01_data_filtered = df_plot.loc[df_plot['Peneira'] == 'PMT 01', indicador_selecionado]
                 if not pmt01_data_filtered.empty:
                     st.write(f"**Média:** {format_brazilian_number(pmt01_data_filtered.mean())}")
                     st.write(f"**Mediana:** {format_brazilian_number(pmt01_data_filtered.median())}")
@@ -691,10 +672,9 @@ if isinstance(df_boxplot, pd.DataFrame) and not df_boxplot.empty:
                     st.write(f"**Máximo:** {format_brazilian_number(pmt01_data_filtered.max())}")
                 else:
                     st.info("Sem dados válidos (excluindo zeros)")
-
             with col2:
                 st.markdown("#### 📈 Estatísticas - PMT 02")
-                pmt02_data_filtered = df_plot.loc[df_plot['Peneira']=='PMT 02', indicador_selecionado]
+                pmt02_data_filtered = df_plot.loc[df_plot['Peneira'] == 'PMT 02', indicador_selecionado]
                 if not pmt02_data_filtered.empty:
                     st.write(f"**Média:** {format_brazilian_number(pmt02_data_filtered.mean())}")
                     st.write(f"**Mediana:** {format_brazilian_number(pmt02_data_filtered.median())}")
@@ -710,7 +690,6 @@ st.subheader("📈 Análise de Tendências Temporais")
 
 if isinstance(df_boxplot, pd.DataFrame) and not df_boxplot.empty:
     indicadores_disponiveis = ['Fe', 'SiO2', 'Al2O3', 'TMP', '>31_5mm', '<0_15mm']
-
     indicador_tendencia = st.selectbox(
         "📊 Selecione um Indicador para Análise de Tendência",
         options=indicadores_disponiveis,
@@ -724,12 +703,13 @@ if isinstance(df_boxplot, pd.DataFrame) and not df_boxplot.empty:
         df_trend = df_trend[df_trend[indicador_tendencia] != 0]  # ignora zeros
 
         if not df_trend.empty:
+            mes_ref = st.session_state.get('mes_referencia', mes_referencia) or 'N/D'
             fig_line = px.line(
                 df_trend.sort_values('Data'),
                 x='Data',
                 y=indicador_tendencia,
                 color='Peneira',
-                title=f"📈 Evolução Temporal de {indicador_tendencia} - {st.session_state['mes_referencia']}",
+                title=f"📈 Evolução Temporal de {indicador_tendencia} - {mes_ref}",
                 markers=True
             )
             fig_line.update_layout(
@@ -747,9 +727,8 @@ if isinstance(df_boxplot, pd.DataFrame) and not df_boxplot.empty:
             # Análise de variabilidade recalculada usando as séries filtradas acima
             st.markdown("#### 🎯 Análise de Variabilidade")
             col1, col2 = st.columns(2)
-
-            pmt01_data_filtered = df_trend.loc[df_trend['Peneira']=='PMT 01', indicador_tendencia]
-            pmt02_data_filtered = df_trend.loc[df_trend['Peneira']=='PMT 02', indicador_tendencia]
+            pmt01_data_filtered = df_trend.loc[df_trend['Peneira'] == 'PMT 01', indicador_tendencia]
+            pmt02_data_filtered = df_trend.loc[df_trend['Peneira'] == 'PMT 02', indicador_tendencia]
 
             with col1:
                 if not pmt01_data_filtered.empty and pmt01_data_filtered.mean() != 0:
