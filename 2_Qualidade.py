@@ -355,7 +355,10 @@ def carregar_excel_qualidade_em_df(excel_bytes: bytes) -> tuple:
             means = {}
             for indicador in indicadores_padrao:
                 if indicador in subset.columns:
-                    means[indicador] = subset[indicador].mean()
+                    col = pd.to_numeric(subset[indicador], errors='coerce')
+                    col = col.dropna()
+                    col = col[col != 0]  # ignora zeros
+                    means[indicador] = col.mean() if not col.empty else pd.NA
                 else:
                     means[indicador] = pd.NA
             return pd.Series(means)
@@ -718,40 +721,37 @@ if isinstance(df_boxplot, pd.DataFrame) and not df_boxplot.empty:
         df_trend = df_boxplot.copy()
         df_trend[indicador_tendencia] = pd.to_numeric(df_trend[indicador_tendencia], errors='coerce')
         df_trend = df_trend.dropna(subset=[indicador_tendencia, 'Data'])
+        df_trend = df_trend[df_trend[indicador_tendencia] != 0]  # ignora zeros
 
         if not df_trend.empty:
-            # Gráfico de linha temporal
             fig_line = px.line(
                 df_trend.sort_values('Data'),
                 x='Data',
                 y=indicador_tendencia,
                 color='Peneira',
-                title=f"📈 Evolução Temporal de {indicador_tendencia} - {mes_referencia}",
+                title=f"📈 Evolução Temporal de {indicador_tendencia} - {st.session_state['mes_referencia']}",
                 markers=True
             )
-
             fig_line.update_layout(
                 template='plotly_white',
                 font=dict(size=12),
                 title_font=dict(size=16),
                 height=400,
                 xaxis_title="Data",
-                yaxis_title=f"{indicador_tendencia} ({'%' if indicador_tendencia in ['Fe', 'SiO2', 'Al2O3', '>31_5mm', '<0_15mm'] else 'mm' if indicador_tendencia == 'TMP' else ''})"
+                yaxis_title=f"{indicador_tendencia} ({'%' if indicador_tendencia in ['Fe', 'SiO2', 'Al2O3', '>31_5mm', '<0_15mm'] else 'mm' if indicador_tendencia == 'TMP' else ''})",
+                yaxis=dict(zeroline=False)  # opcional
             )
-
             fig_line.update_yaxes(tickformat=',.2f')
             st.plotly_chart(fig_line, use_container_width=True)
 
-            # === ANÁLISE DE VARIABILIDADE ===
+            # Análise de variabilidade recalculada usando as séries filtradas acima
             st.markdown("#### 🎯 Análise de Variabilidade")
-
             col1, col2 = st.columns(2)
 
-            def filter_zeros_for_analysis(df, column):
-                return df[df[column] > 0][column]
+            pmt01_data_filtered = df_trend.loc[df_trend['Peneira']=='PMT 01', indicador_tendencia]
+            pmt02_data_filtered = df_trend.loc[df_trend['Peneira']=='PMT 02', indicador_tendencia]
 
             with col1:
-                pmt01_data_filtered = filter_zeros_for_analysis(df_trend[df_trend['Peneira'] == 'PMT 01'], indicador_tendencia)
                 if not pmt01_data_filtered.empty and pmt01_data_filtered.mean() != 0:
                     pmt01_cv = (pmt01_data_filtered.std() / pmt01_data_filtered.mean()) * 100
                     st.metric("Coeficiente de Variação - PMT 01", format_percentage(pmt01_cv))
@@ -759,7 +759,6 @@ if isinstance(df_boxplot, pd.DataFrame) and not df_boxplot.empty:
                     st.metric("Coeficiente de Variação - PMT 01", "N/D")
 
             with col2:
-                pmt02_data_filtered = filter_zeros_for_analysis(df_trend[df_trend['Peneira'] == 'PMT 02'], indicador_tendencia)
                 if not pmt02_data_filtered.empty and pmt02_data_filtered.mean() != 0:
                     pmt02_cv = (pmt02_data_filtered.std() / pmt02_data_filtered.mean()) * 100
                     st.metric("Coeficiente de Variação - PMT 02", format_percentage(pmt02_cv))
