@@ -1,756 +1,339 @@
-"""
-Dashboard de Qualidade - Adaptado para ambiente Streamlit Cloud
-Baseado na estrutura do 1_Producao.py para consistência
-"""
+"""Dashboard de Qualidade - Versão Comprimida"""
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
 from PIL import Image
-import os
-import io
-import base64
+import os, io, base64, zipfile, re, unicodedata
 from cryptography.fernet import Fernet
-import zipfile
-import re
-import unicodedata
 
-# =========================
-# Inicialização segura do Session State (evita KeyError)
-# =========================
-if 'mes_referencia' not in st.session_state:
-    st.session_state['mes_referencia'] = None
-if 'df_boxplot' not in st.session_state:
-    st.session_state['df_boxplot'] = None
-if 'df_qualidade_dia' not in st.session_state:
-    st.session_state['df_qualidade_dia'] = None
-if 'df_qualidade_media' not in st.session_state:
-    st.session_state['df_qualidade_media'] = None
-
-def is_valid_xlsx_bytes(b: bytes) -> bool:
-    """
-    Retorna True se os bytes representarem um arquivo ZIP válido,
-    condição necessária para que seja um XLSX válido.
-    """
-    try:
-        with io.BytesIO(b) as bio:
-            return zipfile.is_zipfile(bio)
-    except Exception:
-        return False
-
-# =========================
-# Configuração de página
-# =========================
+# ========== CONFIGURAÇÃO ==========
 st.set_page_config(layout="wide", page_title="Dashboard de Qualidade Tupacery")
-st.markdown("", unsafe_allow_html=True)
+for key in ['mes_referencia', 'df_boxplot', 'df_qualidade_dia', 'df_qualidade_media']:
+    if key not in st.session_state: st.session_state[key] = None
 
-# =========================
-# Chave e Fernet via secrets
-# =========================
-HEX_KEY_STRING = st.secrets.get("HEX_KEY_STRING", None)
+# ========== CRIPTOGRAFIA ==========
+HEX_KEY_STRING = st.secrets.get("HEX_KEY_STRING")
 fernet = None
-
 if HEX_KEY_STRING:
     try:
-        key_bytes = bytes.fromhex(HEX_KEY_STRING)
-        ENCRYPTION_KEY = base64.urlsafe_b64encode(key_bytes)
-        fernet = Fernet(ENCRYPTION_KEY)
+        fernet = Fernet(base64.urlsafe_b64encode(bytes.fromhex(HEX_KEY_STRING)))
     except ValueError as e:
-        st.error(f"❌ Erro na chave de criptografia. Verifique HEX_KEY_STRING no secrets: {e}")
+        st.error(f"❌ Erro na chave: {e}")
 else:
-    st.error("❌ HEX_KEY_STRING ausente em st.secrets. Configure em Secrets do Streamlit Cloud.")
+    st.error("❌ HEX_KEY_STRING ausente em secrets")
 
-# =========================
-# Constantes e caminhos
-# =========================
-NOME_ARQUIVO_QUALIDADE_SALVO = "Relatorio_Qualidade.encrypted"  # arquivo criptografado
-CAMINHO_LOGO = "Lhg-02.png"
-NOME_ABA_QUALIDADE = "RESUMO GR"
+# ========== CONSTANTES ==========
+ARQUIVO_CRYPT = "Relatorio_Qualidade.encrypted"
+LOGO_PATH = "Lhg-02.png"
+ABA_QUALIDADE = "RESUMO GR"
+INDICADORES = ['Fe', 'SiO2', 'Al2O3', 'TMP', '>31_5mm', '<0_15mm']
 
-# =========================
-# Funções de formatação brasileira
-# =========================
-def format_brazilian_number(value, decimals=2):
-    """Formatar número no padrão brasileiro (1.234,22)"""
-    if pd.isna(value) or value is None:
-        return "N/D"
-    try:
-        num_value = float(value)
-        if decimals == 0:
-            return f"{num_value:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        else:
-            return f"{num_value:,.{decimals}f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    except (ValueError, TypeError):
-        return "N/D"
+# ========== FUNÇÕES UTILITÁRIAS ==========
+def fmt_num(val, dec=2): return f"{float(val):,.{dec}f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notna(val) else "N/D"
+def fmt_pct(val): return f"{fmt_num(val, 2)}%" if pd.notna(val) else "N/D"
+def fmt_med(val, unit="mm"): return f"{fmt_num(val, 2)} {unit}" if pd.notna(val) else "N/D"
 
-def format_percentage(value):
-    """Formatar porcentagem no padrão brasileiro"""
-    return format_brazilian_number(value, 2) + "%"
+def norm_text(x):
+    x = ''.join(c for c in unicodedata.normalize('NFD', str(x).strip().lower()) if unicodedata.category(c) != 'Mn')
+    return re.sub(r'\s+', ' ', x.replace('%', '').replace('(', '').replace(')', '').replace(',', '.'))
 
-def format_measurement(value, unit="mm"):
-    """Formatar medidas com unidade"""
-    formatted = format_brazilian_number(value, 2)
-    return f"{formatted} {unit}" if formatted != "N/D" else "N/D"
-
-# =========================
-# Funções de normalização de texto
-# =========================
-def normalize_text(x: str) -> str:
-    """Normalizar texto removendo acentos e caracteres especiais"""
-    x = str(x).strip()
-    x = ''.join(c for c in unicodedata.normalize('NFD', x) if unicodedata.category(c) != 'Mn')
-    x = x.replace('%', '').replace('(', '').replace(')', '')
-    x = x.replace('\n', ' ').replace('\r', ' ').replace(',', '.').lower()
-    x = re.sub(r'\s+', ' ', x)
-    return x
-
-def map_column_name(col_name: str) -> str:
-    """Mapear nome de coluna para padrão conhecido"""
-    s = normalize_text(col_name)
-
-    mappings = {
-        r'\bfe\b': 'Fe',
-        r'sio2|si o2|silica|silicio|si02': 'SiO2',
-        r'al2o3|alumina|al2': 'Al2O3',
-        r'\bp\b': 'P',
-        r'\bmn\b': 'Mn',
-        r'ton': 'Ton',
-        r'loi': 'LOI',
-        r'\bmm\b|tamanho medio': 'TMP',
-        r'(\+|>) *31(\.|,)5': '>31_5mm',
-        r'- *12(?!.*umidade)': '_coluna_soma_1',
-        r'- *6(\.|,)3': '_coluna_soma_2',
-        r'total': 'TOTAL',
-        r'data': 'Data'
-    }
-
+def map_col(col):
+    s = norm_text(col)
+    mappings = {r'\bfe\b': 'Fe', r'sio2|si o2|silica': 'SiO2', r'al2o3|alumina': 'Al2O3', 
+                r'\bp\b': 'P', r'\bmn\b': 'Mn', r'ton': 'Ton', r'loi': 'LOI', r'\bmm\b': 'TMP',
+                r'(\+|>) *31(\.|,)5': '>31_5mm', r'- *12(?!.*umidade)': '_col1', r'- *6(\.|,)3': '_col2',
+                r'total': 'TOTAL', r'data': 'Data'}
     for pattern, replacement in mappings.items():
-        if re.search(pattern, s):
-            return replacement
+        if re.search(pattern, s): return replacement
+    return col.strip()
 
-    if re.match(r'^\d+(\.|\d+)?$', s):
-        return col_name.strip()
+def is_valid_xlsx(b): 
+    try: return zipfile.is_zipfile(io.BytesIO(b))
+    except: return False
 
-    return col_name.strip()
-
-# =========================
-# I/O: carregar bytes criptografados e descriptografar
-# =========================
-def ler_bytes_arquivo_local(caminho: str) -> bytes | None:
-    """
-    Lê arquivo local sem cache - sempre pega a versão mais atual do repositório
-    """
-    if not os.path.exists(caminho):
-        return None
+# ========== I/O FUNCTIONS ==========
+def ler_arquivo_local(path):
+    if not os.path.exists(path): return None
     try:
-        stat_info = os.stat(caminho)
-        file_size = stat_info.st_size
-        file_mtime = stat_info.st_mtime
+        stat = os.stat(path)
+        cache_key = f"{path}_{stat.st_size}_{stat.st_mtime}"
+        if 'file_cache' not in st.session_state: st.session_state['file_cache'] = {}
+        if cache_key in st.session_state['file_cache']: return st.session_state['file_cache'][cache_key]
+        with open(path, "rb") as f: data = f.read()
+        st.session_state['file_cache'] = {cache_key: data}
+        return data
+    except Exception as e: st.error(f"Erro ao ler {path}: {e}"); return None
 
-        cache_key = f"{caminho}_{file_size}_{file_mtime}"
+def decrypt_data(cipher_bytes): 
+    try: return fernet.decrypt(cipher_bytes)
+    except Exception as e: st.error(f"Erro decrypt: {e}"); return None
 
-        if 'file_cache_qualidade' not in st.session_state:
-            st.session_state['file_cache_qualidade'] = {}
-
-        if cache_key in st.session_state['file_cache_qualidade']:
-            return st.session_state['file_cache_qualidade'][cache_key]
-
-        with open(caminho, "rb") as f:
-            file_bytes = f.read()
-
-        st.session_state['file_cache_qualidade'] = {cache_key: file_bytes}
-        return file_bytes
-    except Exception as e:
-        st.error(f"Erro ao ler arquivo {caminho}: {e}")
-        return None
-
-def descriptografar_bytes(cipher_bytes: bytes, fernet_obj: Fernet) -> bytes | None:
-    try:
-        return fernet_obj.decrypt(cipher_bytes)
-    except Exception as e:
-        st.error(f"Erro ao descriptografar o arquivo: {e}")
-        return None
-
-# =========================
-# Processamento de dados específico para qualidade
-# =========================
-def flatten_multiindex_columns(df_block: pd.DataFrame) -> pd.DataFrame:
-    """Achatar colunas multi-índice"""
-    if not isinstance(df_block.columns, pd.MultiIndex):
-        return df_block
-
+# ========== PROCESSAMENTO DE DADOS ==========
+def flatten_cols(df):
+    if not isinstance(df.columns, pd.MultiIndex): return df
     new_cols = []
-    for col in df_block.columns:
+    for col in df.columns:
         if isinstance(col, tuple):
             a, b = col
             a_txt = '' if pd.isna(a) else str(a).strip()
             b_txt = '' if pd.isna(b) else str(b).strip()
-            chosen = b_txt if b_txt else a_txt
-            new_cols.append(chosen if chosen else f"{a}_{b}")
-        else:
-            new_cols.append(str(col))
+            new_cols.append(b_txt if b_txt else a_txt if a_txt else f"{a}_{b}")
+        else: new_cols.append(str(col))
+    df.columns = new_cols
+    return df
 
-    df_block.columns = new_cols
-    return df_block
-
-def detect_data_blocks(df_raw: pd.DataFrame):
-    """Detectar blocos de dados (PMT 01 e PMT 02)"""
-    try:
-        lvl1 = df_raw.columns.get_level_values(1).tolist()
-        lvl1_norm = [normalize_text(x) if not pd.isna(x) else '' for x in lvl1]
-        start_idxs = [i for i, v in enumerate(lvl1_norm) if 'data' in v]
-        if len(start_idxs) >= 2:
-            blocks = []
-            for i, s in enumerate(start_idxs):
-                e = start_idxs[i + 1] - 1 if i + 1 < len(start_idxs) else (df_raw.shape[1] - 1)
-                blocks.append((s, e))
-            return blocks[:2]
-    except Exception:
-        pass
-    return [(260, 267), (709, 716)]
-
-def process_dataframe_block(df_block: pd.DataFrame) -> pd.DataFrame:
-    """Processar um bloco de dados"""
-    df_block = flatten_multiindex_columns(df_block)
-    df_block.rename(columns={c: map_column_name(c) for c in df_block.columns}, inplace=True)
-
-    # Remover duplicatas de colunas
-    cols = list(df_block.columns)
-    seen = {}
-    new_cols = []
+def process_block(df_block):
+    df_block = flatten_cols(df_block)
+    df_block.rename(columns={c: map_col(c) for c in df_block.columns}, inplace=True)
+    
+    # Fix duplicate columns
+    cols, seen, new_cols = list(df_block.columns), {}, []
     for c in cols:
-        if c in seen:
-            seen[c] += 1
-            new_cols.append(f"{c}_{seen[c]}")
-        else:
-            seen[c] = 1
-            new_cols.append(c)
+        if c in seen: seen[c] += 1; new_cols.append(f"{c}_{seen[c]}")
+        else: seen[c] = 1; new_cols.append(c)
     df_block.columns = new_cols
-
-    # Encontrar e renomear coluna de data
-    date_col = None
-    for c in df_block.columns:
-        if 'data' in normalize_text(c):
-            date_col = c
-            break
-
-    if date_col:
-        df_block.rename(columns={date_col: 'Data'}, inplace=True)
-    else:
-        df_block.rename(columns={df_block.columns[0]: 'Data'}, inplace=True)
-
-    # Converter tipos de dados
+    
+    # Find date column
+    date_col = next((c for c in df_block.columns if 'data' in norm_text(c)), df_block.columns[0])
+    df_block.rename(columns={date_col: 'Data'}, inplace=True)
+    
+    # Convert types
     df_block['Data'] = pd.to_datetime(df_block['Data'], errors='coerce')
     for col in df_block.columns:
-        if col != 'Data':
-            df_block[col] = pd.to_numeric(df_block[col], errors='coerce')
-
-    # Calcular coluna <0_15mm se necessário
-    if '_coluna_soma_1' in df_block.columns and '_coluna_soma_2' in df_block.columns:
-        df_block['<0_15mm'] = df_block['_coluna_soma_1'].fillna(0) + df_block['_coluna_soma_2'].fillna(0)
-
+        if col != 'Data': df_block[col] = pd.to_numeric(df_block[col], errors='coerce')
+    
+    # Calculate <0_15mm
+    if '_col1' in df_block.columns and '_col2' in df_block.columns:
+        df_block['<0_15mm'] = df_block['_col1'].fillna(0) + df_block['_col2'].fillna(0)
+    
     return df_block
 
-@st.cache_data(ttl=300)  # Cache reduzido para 5 minutos
-def carregar_excel_qualidade_em_df(excel_bytes: bytes) -> tuple:
-    """Carregar e processar dados de qualidade"""
+@st.cache_data(ttl=300)
+def load_quality_data(excel_bytes):
     try:
-        df_raw = pd.read_excel(
-            io.BytesIO(excel_bytes),
-            sheet_name=NOME_ABA_QUALIDADE,
-            header=[0, 1],
-            nrows=34,
-            engine='openpyxl'
-        )
-
-        # Detectar blocos de dados
-        blocks = detect_data_blocks(df_raw)
-
-        # Processar blocos PMT 01 e PMT 02
-        s1, e1 = blocks[0]
-        s2, e2 = blocks[1]
-        df_pmt01 = process_dataframe_block(df_raw.iloc[:, s1:e1+1].copy())
-        df_pmt02 = process_dataframe_block(df_raw.iloc[:, s2:e2+1].copy())
-
-        # Encontrar última data válida
-        def find_last_valid_date(df_block):
-            if 'Ton' in df_block.columns:
-                mask = pd.to_numeric(df_block['Ton'], errors='coerce').fillna(0) > 0
-                if mask.any():
-                    return df_block.loc[mask, 'Data'].max()
-            numeric_cols = [c for c in df_block.columns if c != 'Data']
+        df_raw = pd.read_excel(io.BytesIO(excel_bytes), sheet_name=ABA_QUALIDADE, header=[0, 1], nrows=34, engine='openpyxl')
+        
+        # Detect blocks (simplified)
+        blocks = [(260, 267), (709, 716)]  # Default positions
+        try:
+            lvl1 = [norm_text(x) if not pd.isna(x) else '' for x in df_raw.columns.get_level_values(1)]
+            starts = [i for i, v in enumerate(lvl1) if 'data' in v]
+            if len(starts) >= 2:
+                blocks = [(starts[0], starts[1]-1), (starts[1], df_raw.shape[1]-1)][:2]
+        except: pass
+        
+        # Process blocks
+        s1, e1 = blocks[0]; s2, e2 = blocks[1]
+        pmt01 = process_block(df_raw.iloc[:, s1:e1+1].copy())
+        pmt02 = process_block(df_raw.iloc[:, s2:e2+1].copy())
+        
+        # Find last valid date
+        def last_valid_date(df):
+            if 'Ton' in df.columns:
+                mask = pd.to_numeric(df['Ton'], errors='coerce').fillna(0) > 0
+                if mask.any(): return df.loc[mask, 'Data'].max()
+            numeric_cols = [c for c in df.columns if c != 'Data']
             if numeric_cols:
-                mask = df_block[numeric_cols].notna().any(axis=1)
-                if mask.any():
-                    return df_block.loc[mask, 'Data'].max()
-            return df_block['Data'].dropna().max() if df_block['Data'].notna().any() else pd.NaT
-
-        last1 = find_last_valid_date(df_pmt01)
-        last2 = find_last_valid_date(df_pmt02)
-
-        valid_dates = [d for d in [last1, last2] if not pd.isna(d)]
-        if not valid_dates:
-            st.error("Nenhuma data válida encontrada nos dados.")
-            return None, None, None, None
-
-        ultimo_dia = max(valid_dates)
-
-        # Preparar dados do último dia
-        indicadores_padrao = ['Fe', 'SiO2', 'Al2O3', 'TMP', '>31_5mm', '<0_15mm']
-
-        def get_data_for_date(df_block, target_date):
+                mask = df[numeric_cols].notna().any(axis=1)
+                if mask.any(): return df.loc[mask, 'Data'].max()
+            return df['Data'].dropna().max() if df['Data'].notna().any() else pd.NaT
+        
+        ultimo_dia = max([d for d in [last_valid_date(pmt01), last_valid_date(pmt02)] if not pd.isna(d)])
+        
+        # Get data for last day
+        def get_day_data(df, date):
             try:
-                mask = df_block['Data'] == target_date
-                if mask.any():
-                    return df_block.loc[mask].iloc[0].drop(labels='Data')
-            except Exception:
-                pass
-            if 'Ton' in df_block.columns:
+                mask = df['Data'] == date
+                if mask.any(): return df.loc[mask].iloc[0].drop(labels='Data')
+            except: pass
+            if 'Ton' in df.columns:
                 try:
-                    mask = pd.to_numeric(df_block['Ton'], errors='coerce').fillna(0) > 0
-                    if mask.any():
-                        return df_block.loc[mask].iloc[-1].drop(labels='Data')
-                except Exception:
-                    pass
-            numeric_cols = [c for c in df_block.columns if c != 'Data']
-            mask = df_block[numeric_cols].notna().any(axis=1)
-            if mask.any():
-                return df_block.loc[mask].iloc[-1].drop(labels='Data')
-            return pd.Series([pd.NA] * len(numeric_cols), index=numeric_cols)
-
-        row_pmt01 = get_data_for_date(df_pmt01, ultimo_dia)
-        row_pmt02 = get_data_for_date(df_pmt02, ultimo_dia)
-
-        # Criar DataFrame do dia
-        dia_data = {}
-        for indicador in indicadores_padrao:
-            dia_data[indicador] = [
-                row_pmt01.get(indicador, pd.NA),
-                row_pmt02.get(indicador, pd.NA)
-            ]
+                    mask = pd.to_numeric(df['Ton'], errors='coerce').fillna(0) > 0
+                    if mask.any(): return df.loc[mask].iloc[-1].drop(labels='Data')
+                except: pass
+            numeric_cols = [c for c in df.columns if c != 'Data']
+            mask = df[numeric_cols].notna().any(axis=1)
+            return df.loc[mask].iloc[-1].drop(labels='Data') if mask.any() else pd.Series([pd.NA] * len(numeric_cols), index=numeric_cols)
+        
+        row1, row2 = get_day_data(pmt01, ultimo_dia), get_day_data(pmt02, ultimo_dia)
+        
+        # Create day DataFrame
+        dia_data = {ind: [row1.get(ind, pd.NA), row2.get(ind, pd.NA)] for ind in INDICADORES}
         dia = pd.DataFrame(dia_data, index=['PMT 01', 'PMT 02']).T
         dia.loc['PRODUTO_DIA'] = [ultimo_dia, ultimo_dia]
-
-        # Calcular médias mensais: excluir nulos e zeros
-        def calc_monthly_mean(df_block):
-            if 'Ton' in df_block.columns:
-                productive_mask = pd.to_numeric(df_block['Ton'], errors='coerce').fillna(0) > 0
-                subset = df_block[productive_mask] if productive_mask.any() else df_block
-            else:
-                numeric_cols = [c for c in df_block.columns if c != 'Data']
-                subset = df_block[df_block[numeric_cols].notna().any(axis=1)]
+        
+        # Calculate monthly means (excluding zeros)
+        def calc_mean(df):
+            subset = df[pd.to_numeric(df.get('Ton', pd.Series([0])), errors='coerce').fillna(0) > 0] if 'Ton' in df.columns else df[df[[c for c in df.columns if c != 'Data']].notna().any(axis=1)]
             means = {}
-            for indicador in indicadores_padrao:
-                if indicador in subset.columns:
-                    col = pd.to_numeric(subset[indicador], errors='coerce')
-                    col = col.dropna()
-                    col = col[col != 0]  # ignora zeros
-                    means[indicador] = col.mean() if not col.empty else pd.NA
-                else:
-                    means[indicador] = pd.NA
+            for ind in INDICADORES:
+                if ind in subset.columns:
+                    col = pd.to_numeric(subset[ind], errors='coerce').dropna()
+                    col = col[col != 0]
+                    means[ind] = col.mean() if not col.empty else pd.NA
+                else: means[ind] = pd.NA
             return pd.Series(means)
-
-        media_pmt01 = calc_monthly_mean(df_pmt01)
-        media_pmt02 = calc_monthly_mean(df_pmt02)
-        media = pd.DataFrame({'PMT 01': media_pmt01, 'PMT 02': media_pmt02})
-
-        # Preparar dados para boxplot
-        df_pmt01_box = df_pmt01.copy()
-        df_pmt01_box['Peneira'] = 'PMT 01'
-        df_pmt02_box = df_pmt02.copy()
-        df_pmt02_box['Peneira'] = 'PMT 02'
-        boxplot_data = pd.concat([df_pmt01_box, df_pmt02_box], ignore_index=True)
-        boxplot_data = boxplot_data[boxplot_data['Data'].notna()].reset_index(drop=True)
-
-        # Formatar mês de referência
-        mes_num = ultimo_dia.strftime('%m/%Y')
-        meses_pt = {
-            '01': 'Janeiro', '02': 'Fevereiro', '03': 'Março', '04': 'Abril',
-            '05': 'Maio', '06': 'Junho', '07': 'Julho', '08': 'Agosto',
-            '09': 'Setembro', '10': 'Outubro', '11': 'Novembro', '12': 'Dezembro'
-        }
-        mm = mes_num.split('/')[0]
-        mes_pt = f"{meses_pt.get(mm, mm)}/{mes_num.split('/')[1]}"
-
+        
+        media = pd.DataFrame({'PMT 01': calc_mean(pmt01), 'PMT 02': calc_mean(pmt02)})
+        
+        # Boxplot data
+        pmt01['Peneira'] = 'PMT 01'; pmt02['Peneira'] = 'PMT 02'
+        boxplot_data = pd.concat([pmt01, pmt02], ignore_index=True)[lambda x: x['Data'].notna()].reset_index(drop=True)
+        
+        # Format month
+        meses = {'01': 'Janeiro', '02': 'Fevereiro', '03': 'Março', '04': 'Abril', '05': 'Maio', '06': 'Junho',
+                '07': 'Julho', '08': 'Agosto', '09': 'Setembro', '10': 'Outubro', '11': 'Novembro', '12': 'Dezembro'}
+        mm, yy = ultimo_dia.strftime('%m'), ultimo_dia.strftime('%Y')
+        mes_pt = f"{meses.get(mm, mm)}/{yy}"
+        
         return dia, media, boxplot_data, mes_pt
+    except Exception as e: st.error(f"Erro ao processar dados: {e}"); return None, None, None, None
 
-    except Exception as e:
-        st.error(f"Erro ao ler/processar a planilha de qualidade: {e}")
-        return None, None, None, None
+# ========== CARREGAMENTO DE DADOS ==========
+def load_data():
+    if not fernet: st.error("Fernet indisponível"); return None, None, None, None
+    
+    # Try encrypted file from repo
+    cipher_bytes = ler_arquivo_local(ARQUIVO_CRYPT)
+    if cipher_bytes:
+        st.success(f"✅ Dados carregados: {ARQUIVO_CRYPT}")
+        plain_bytes = decrypt_data(cipher_bytes)
+        if plain_bytes:
+            result = load_quality_data(plain_bytes)
+            if result[0] is not None:
+                try: st.info(f"📅 Última atualização: {datetime.fromtimestamp(os.stat(ARQUIVO_CRYPT).st_mtime).strftime('%d/%m/%Y às %H:%M:%S')}")
+                except: pass
+                return result
+    
+    # Fallback: file upload
+    st.warning("⚠️ Arquivo não encontrado. Faça upload:")
+    up = st.file_uploader("Arquivo criptografado", type=["encrypted", "bin", "xlsx"], key="qual_up")
+    if up:
+        st.write(f"📁 {up.name} ({len(up_bytes := up.read())} bytes)")
+        plain_bytes = decrypt_data(up_bytes)
+        if plain_bytes:
+            st.success("🔓 Descriptografado!")
+            result = load_quality_data(plain_bytes)
+            return result if result[0] is not None else (None, None, None, None)
+        elif is_valid_xlsx(up_bytes):
+            st.warning("⚠️ Tentando como XLSX...")
+            result = load_quality_data(up_bytes)
+            if result[0] is not None: st.info("📈 Lido sem criptografia"); return result
+    return None, None, None, None
 
-# =========================
-# Header e logo
-# =========================
+# ========== INTERFACE ==========
+# Logo
 try:
-    if os.path.exists(CAMINHO_LOGO):
-        logo = Image.open(CAMINHO_LOGO)
-        st.image(logo, width=200)
-    else:
-        st.info("Logo não encontrada (Lhg-02.png). Coloque o arquivo na raiz do app.")
-except Exception:
-    st.info("Falha ao carregar a logo. Verifique o arquivo Lhg-02.png.")
+    if os.path.exists(LOGO_PATH): st.image(Image.open(LOGO_PATH), width=200)
+    else: st.info("Logo não encontrada")
+except: st.info("Falha ao carregar logo")
 
 st.title("Dashboard de Qualidade - Peneiras Móveis Tupacery")
 st.markdown("---")
 
-# =========================
-# Entrada de dados
-# =========================
-def carregar_dados_qualidade_automaticamente() -> tuple:
-    """
-    Carrega dados de qualidade automaticamente, priorizando arquivo do repositório
-    """
-    if fernet is None:
-        st.error("Chave Fernet indisponível; verifique HEX_KEY_STRING em secrets.")
-        return None, None, None, None
+# Load data
+df_dia, df_media, df_box, mes_ref = load_data()
+if df_dia is None: st.error("❌ Não foi possível carregar dados"); st.stop()
 
-    # 1) Tentar ler o token criptografado do repositório
-    cipher_bytes_repo = ler_bytes_arquivo_local(NOME_ARQUIVO_QUALIDADE_SALVO)
-    if cipher_bytes_repo:
-        st.success(f"✅ Dados de qualidade carregados do repositório: {NOME_ARQUIVO_QUALIDADE_SALVO}")
-        plain_bytes = descriptografar_bytes(cipher_bytes_repo, fernet)
-        if plain_bytes:
-            resultado = carregar_excel_qualidade_em_df(plain_bytes)
-            if resultado[0] is not None:
-                try:
-                    stat_info = os.stat(NOME_ARQUIVO_QUALIDADE_SALVO)
-                    ultima_modificacao = datetime.fromtimestamp(stat_info.st_mtime)
-                    st.info(f"📅 Última atualização: {ultima_modificacao.strftime('%d/%m/%Y às %H:%M:%S')}")
-                except:
-                    pass
-                return resultado
-            else:
-                st.warning("Descriptografia ocorreu, mas leitura do Excel de qualidade falhou.")
+# Store in session
+for k, v in zip(['df_qualidade_dia', 'df_qualidade_media', 'df_boxplot', 'mes_referencia'], [df_dia, df_media, df_box, mes_ref]):
+    st.session_state[k] = v
 
-    # 2) Fallback: upload do arquivo criptografado
-    st.warning("⚠️ Arquivo de qualidade não encontrado no repositório. Faça upload do arquivo criptografado:")
-    up = st.file_uploader(
-        "Selecione o arquivo Excel de qualidade criptografado (token Fernet)",
-        type=["encrypted", "bin", "xlsx"],
-        help="Envie o arquivo .encrypted gerado pelo processo de criptografia",
-        key="qualidade_uploader"
-    )
-
-    if up is not None:
-        st.write(f"📁 Arquivo recebido: {up.name}")
-        up_bytes = up.read()
-        st.write(f"📊 Tamanho do arquivo: {len(up_bytes)} bytes")
-
-        # Tenta descriptografar primeiro (caminho padrão)
-        plain_bytes = descriptografar_bytes(up_bytes, fernet)
-        if plain_bytes:
-            st.success("🔓 Descriptografia realizada com sucesso!")
-            resultado = carregar_excel_qualidade_em_df(plain_bytes)
-            if resultado[0] is not None:
-                return resultado
-            else:
-                st.warning("Descriptografia OK, mas XLSX de qualidade inválido.")
-        else:
-            # Fallback opcional para testes: tentar ler como XLSX em claro
-            st.warning("⚠️ Tentando interpretar como XLSX não criptografado (apenas para testes)...")
-            if is_valid_xlsx_bytes(up_bytes):
-                resultado = carregar_excel_qualidade_em_df(up_bytes)
-                if resultado[0] is not None:
-                    st.info("📈 Arquivo lido sem criptografia (modo de teste)")
-                    return resultado
-                else:
-                    st.error("❌ Falha ao ler arquivo como XLSX de qualidade.")
-            else:
-                st.error("❌ Arquivo não é um token Fernet válido nem um XLSX válido.")
-
-    return None, None, None, None
-
-# Carregamento automático dos dados
-df_qualidade_dia, df_qualidade_media, df_boxplot, mes_referencia = carregar_dados_qualidade_automaticamente()
-
-if df_qualidade_dia is None:
-    st.error("❌ Não foi possível carregar os dados de qualidade. Verifique o arquivo criptografado e a chave em secrets.")
-    st.stop()
-
-# Persistir em session_state para uso seguro em todo o app
-st.session_state['df_qualidade_dia'] = df_qualidade_dia
-st.session_state['df_qualidade_media'] = df_qualidade_media
-st.session_state['df_boxplot'] = df_boxplot
-st.session_state['mes_referencia'] = mes_referencia
-
-# =========================
-# Sidebar de metas
-# =========================
+# Sidebar
 st.sidebar.header("🎯 Metas de Qualidade")
-st.sidebar.markdown(f"**📅 Mês: {mes_referencia if mes_referencia else 'N/D'}**")
+st.sidebar.markdown(f"**📅 Mês: {mes_ref or 'N/D'}**")
 st.sidebar.markdown("---")
+st.sidebar.info("🔄 Dados atualizados automaticamente")
 
-st.sidebar.subheader("🧪 Químicos (%)")
-meta_fe_min = st.sidebar.number_input("Fe (Mínimo)", value=65.0, step=0.1)
-meta_sio2_max = st.sidebar.number_input("SiO₂ (Máximo)", value=1.5, step=0.1)
-meta_al2o3_max = st.sidebar.number_input("Al₂O₃ (Máximo)", value=0.8, step=0.1)
+# Get product day
+try: produto_dia_str = pd.to_datetime(df_dia.loc['PRODUTO_DIA', 'PMT 01']).strftime('%d/%m/%Y')
+except: produto_dia_str = 'N/D'
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("⚖️ Físicos")
-meta_tmp = st.sidebar.number_input("TMP (mm)", value=18.0, step=0.5)
-meta_acima_31mm_max = st.sidebar.number_input(">31,5mm (%)", value=10.0, step=1.0)
-meta_abaixo_015mm_max = st.sidebar.number_input("<0,15mm (%)", value=5.0, step=1.0)
-
-# Informação sobre atualização automática
-st.sidebar.markdown("---")
-st.sidebar.info("🔄 Os dados são atualizados automaticamente quando o arquivo for modificado no repositório.")
-
-# =========================
-# Dashboard principal
-# =========================
-
-# Extrair data do último dia
-try:
-    produto_dia_raw = df_qualidade_dia.loc['PRODUTO_DIA', 'PMT 01']
-    produto_dia_str = pd.to_datetime(produto_dia_raw).strftime('%d/%m/%Y')
-except Exception:
-    produto_dia_str = 'N/D'
-
-# === RESULTADOS DO ÚLTIMO DIA ===
+# ========== RESULTADOS DO DIA ==========
 st.subheader(f"📊 Resultados do Último Dia ({produto_dia_str})")
 
+def render_metrics(df, pmt, title):
+    st.markdown(f"### 🏭 {title}")
+    cols = st.columns(6)
+    metrics = [('Fe', fmt_pct), ('SiO₂', fmt_pct), ('Al₂O₃', fmt_pct), ('TMP', lambda x: fmt_med(x, 'mm')), ('>31,5mm', fmt_pct), ('<12mm', fmt_pct)]
+    indices = ['Fe', 'SiO2', 'Al2O3', 'TMP', '>31_5mm', '<0_15mm']
+    for i, ((label, fmt_func), idx) in enumerate(zip(metrics, indices)):
+        with cols[i]: st.metric(label, fmt_func(df.loc[idx, pmt] if idx in df.index else None))
+
 col1, col2 = st.columns(2)
-
-# PMT 01
-with col1:
-    st.markdown("### 🏭 PMT 01 - TUPACERY")
-    subcol1, subcol2, subcol3 = st.columns(3)
-    with subcol1:
-        fe_val = df_qualidade_dia.loc['Fe', 'PMT 01'] if 'Fe' in df_qualidade_dia.index else None
-        st.metric("Fe", format_percentage(fe_val))
-    with subcol2:
-        sio2_val = df_qualidade_dia.loc['SiO2', 'PMT 01'] if 'SiO2' in df_qualidade_dia.index else None
-        st.metric("SiO₂", format_percentage(sio2_val))
-    with subcol3:
-        al2o3_val = df_qualidade_dia.loc['Al2O3', 'PMT 01'] if 'Al2O3' in df_qualidade_dia.index else None
-        st.metric("Al₂O₃", format_percentage(al2o3_val))
-
-    subcol4, subcol5, subcol6 = st.columns(3)
-    with subcol4:
-        tmp_val = df_qualidade_dia.loc['TMP', 'PMT 01'] if 'TMP' in df_qualidade_dia.index else None
-        st.metric("TMP", format_measurement(tmp_val, "mm"))
-    with subcol5:
-        acima31_val = df_qualidade_dia.loc['>31_5mm', 'PMT 01'] if '>31_5mm' in df_qualidade_dia.index else None
-        st.metric(">31,5mm", format_percentage(acima31_val))
-    with subcol6:
-        abaixo015_val = df_qualidade_dia.loc['<0_15mm', 'PMT 01'] if '<0_15mm' in df_qualidade_dia.index else None
-        st.metric("<0,15mm", format_percentage(abaixo015_val))
-
-# PMT 02
-with col2:
-    st.markdown("### 🏭 PMT 02 - TUPACERY")
-    subcol1, subcol2, subcol3 = st.columns(3)
-    with subcol1:
-        fe_val = df_qualidade_dia.loc['Fe', 'PMT 02'] if 'Fe' in df_qualidade_dia.index else None
-        st.metric("Fe", format_percentage(fe_val))
-    with subcol2:
-        sio2_val = df_qualidade_dia.loc['SiO2', 'PMT 02'] if 'SiO2' in df_qualidade_dia.index else None
-        st.metric("SiO₂", format_percentage(sio2_val))
-    with subcol3:
-        al2o3_val = df_qualidade_dia.loc['Al2O3', 'PMT 02'] if 'Al2O3' in df_qualidade_dia.index else None
-        st.metric("Al₂O₃", format_percentage(al2o3_val))
-
-    subcol4, subcol5, subcol6 = st.columns(3)
-    with subcol4:
-        tmp_val = df_qualidade_dia.loc['TMP', 'PMT 02'] if 'TMP' in df_qualidade_dia.index else None
-        st.metric("TMP", format_measurement(tmp_val, "mm"))
-    with subcol5:
-        acima31_val = df_qualidade_dia.loc['>31_5mm', 'PMT 02'] if '>31_5mm' in df_qualidade_dia.index else None
-        st.metric(">31,5mm", format_percentage(acima31_val))
-    with subcol6:
-        abaixo015_val = df_qualidade_dia.loc['<0_15mm', 'PMT 02'] if '<0_15mm' in df_qualidade_dia.index else None
-        st.metric("<0,15mm", format_percentage(abaixo015_val))
+with col1: render_metrics(df_dia, 'PMT 01', 'PMT 01 - TUPACERY')
+with col2: render_metrics(df_dia, 'PMT 02', 'PMT 02 - TUPACERY')
 
 st.markdown("---")
 
-# === MÉDIA DO MÊS ===
+# ========== MÉDIA DO MÊS ==========
 st.subheader("📈 Média Geral do Mês")
-
 col1, col2 = st.columns(2)
-
-with col1:
-    st.markdown("### 🏭 PMT 01 - TUPACERY")
-    subcol1, subcol2, subcol3 = st.columns(3)
-    with subcol1:
-        fe_media = df_qualidade_media.loc['Fe', 'PMT 01'] if 'Fe' in df_qualidade_media.index else None
-        st.metric("Fe (Média)", format_percentage(fe_media))
-    with subcol2:
-        sio2_media = df_qualidade_media.loc['SiO2', 'PMT 01'] if 'SiO2' in df_qualidade_media.index else None
-        st.metric("SiO₂ (Média)", format_percentage(sio2_media))
-    with subcol3:
-        al2o3_media = df_qualidade_media.loc['Al2O3', 'PMT 01'] if 'Al2O3' in df_qualidade_media.index else None
-        st.metric("Al₂O₃ (Média)", format_percentage(al2o3_media))
-
-    subcol4, subcol5, subcol6 = st.columns(3)
-    with subcol4:
-        tmp_media = df_qualidade_media.loc['TMP', 'PMT 01'] if 'TMP' in df_qualidade_media.index else None
-        st.metric("TMP (Média)", format_measurement(tmp_media, "mm"))
-    with subcol5:
-        acima31_media = df_qualidade_media.loc['>31_5mm', 'PMT 01'] if '>31_5mm' in df_qualidade_media.index else None
-        st.metric(">31,5mm (Média)", format_percentage(acima31_media))
-    with subcol6:
-        abaixo015_media = df_qualidade_media.loc['<0_15mm', 'PMT 01'] if '<0_15mm' in df_qualidade_media.index else None
-        st.metric("<0,15mm (Média)", format_percentage(abaixo015_media))
-
-with col2:
-    st.markdown("### 🏭 PMT 02 - TUPACERY")
-    subcol1, subcol2, subcol3 = st.columns(3)
-    with subcol1:
-        fe_media = df_qualidade_media.loc['Fe', 'PMT 02'] if 'Fe' in df_qualidade_media.index else None
-        st.metric("Fe (Média)", format_percentage(fe_media))
-    with subcol2:
-        sio2_media = df_qualidade_media.loc['SiO2', 'PMT 02'] if 'SiO2' in df_qualidade_media.index else None
-        st.metric("SiO₂ (Média)", format_percentage(sio2_media))
-    with subcol3:
-        al2o3_media = df_qualidade_media.loc['Al2O3', 'PMT 02'] if 'Al2O3' in df_qualidade_media.index else None
-        st.metric("Al₂O₃ (Média)", format_percentage(al2o3_media))
-
-    subcol4, subcol5, subcol6 = st.columns(3)
-    with subcol4:
-        tmp_media = df_qualidade_media.loc['TMP', 'PMT 02'] if 'TMP' in df_qualidade_media.index else None
-        st.metric("TMP (Média)", format_measurement(tmp_media, "mm"))
-    with subcol5:
-        acima31_media = df_qualidade_media.loc['>31_5mm', 'PMT 02'] if '>31_5mm' in df_qualidade_media.index else None
-        st.metric(">31,5mm (Média)", format_percentage(acima31_media))
-    with subcol6:
-        abaixo015_media = df_qualidade_media.loc['<0_15mm', 'PMT 02'] if '<0_15mm' in df_qualidade_media.index else None
-        st.metric("<0,15mm (Média)", format_percentage(abaixo015_media))
+with col1: render_metrics(df_media, 'PMT 01', 'PMT 01 - TUPACERY')
+with col2: render_metrics(df_media, 'PMT 02', 'PMT 02 - TUPACERY')
 
 st.markdown("---")
 
-# === ANÁLISE DE DISTRIBUIÇÃO ===
+# ========== ANÁLISES ==========
 st.subheader("📊 Distribuição e Consistência da Qualidade no Mês")
 
-if isinstance(df_boxplot, pd.DataFrame) and not df_boxplot.empty:
-    indicadores_disponiveis = ['Fe', 'SiO2', 'Al2O3', 'TMP', '>31_5mm', '<0_15mm']
-    indicador_selecionado = st.selectbox(
-        "🎯 Selecione um Indicador para Análise Detalhada",
-        options=indicadores_disponiveis
-    )
-
-    if indicador_selecionado:
-        # Converter e filtrar: dropna e remover zeros
-        df_boxplot[indicador_selecionado] = pd.to_numeric(df_boxplot[indicador_selecionado], errors='coerce')
-        df_plot = df_boxplot.dropna(subset=[indicador_selecionado, 'Data']).copy()
-        df_plot = df_plot[df_plot[indicador_selecionado] != 0]  # ignora zeros
-
+if isinstance(df_box, pd.DataFrame) and not df_box.empty:
+    ind_sel = st.selectbox("🎯 Selecione um Indicador", INDICADORES)
+    if ind_sel:
+        df_box[ind_sel] = pd.to_numeric(df_box[ind_sel], errors='coerce')
+        df_plot = df_box.dropna(subset=[ind_sel, 'Data'])[lambda x: x[ind_sel] != 0].copy()
+        
         if not df_plot.empty:
-            mes_ref = st.session_state.get('mes_referencia', mes_referencia) or 'N/D'
-            fig_boxplot = px.box(
-                df_plot,
-                x='Peneira',
-                y=indicador_selecionado,
-                color='Peneira',
-                points=False,  # opcional: oculta pontos/outliers
-                title=f"📊 Distribuição de {indicador_selecionado} por Peneira - {mes_ref}"
-            )
-            fig_boxplot.update_layout(
-                template='plotly_white',
-                font=dict(size=12),
-                title_font=dict(size=16),
-                showlegend=True,
-                height=500,
-                yaxis=dict(zeroline=False)  # opcional: remove linha em 0
-            )
-            fig_boxplot.update_yaxes(
-                tickformat=',.2f',
-                title=f"{indicador_selecionado} ({'%' if indicador_selecionado in ['Fe', 'SiO2', 'Al2O3', '>31_5mm', '<0_15mm'] else 'mm' if indicador_selecionado == 'TMP' else ''})"
-            )
-            st.plotly_chart(fig_boxplot, use_container_width=True)
-
-            # Estatísticas descritivas (já sem zeros)
+            # Boxplot
+            fig_box = px.box(df_plot, x='Peneira', y=ind_sel, color='Peneira', points=False, 
+                           title=f"📊 Distribuição de {ind_sel} - {mes_ref}")
+            fig_box.update_layout(template='plotly_white', height=500, showlegend=True)
+            fig_box.update_yaxes(tickformat=',.2f', title=f"{ind_sel} ({'%' if ind_sel in ['Fe', 'SiO2', 'Al2O3', '>31_5mm', '<0_15mm'] else 'mm' if ind_sel == 'TMP' else ''})")
+            st.plotly_chart(fig_box, use_container_width=True)
+            
+            # Stats
             col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("#### 📈 Estatísticas - PMT 01")
-                pmt01_data_filtered = df_plot.loc[df_plot['Peneira'] == 'PMT 01', indicador_selecionado]
-                if not pmt01_data_filtered.empty:
-                    st.write(f"**Média:** {format_brazilian_number(pmt01_data_filtered.mean())}")
-                    st.write(f"**Mediana:** {format_brazilian_number(pmt01_data_filtered.median())}")
-                    st.write(f"**Desvio Padrão:** {format_brazilian_number(pmt01_data_filtered.std())}")
-                    st.write(f"**Mínimo:** {format_brazilian_number(pmt01_data_filtered.min())}")
-                    st.write(f"**Máximo:** {format_brazilian_number(pmt01_data_filtered.max())}")
-                else:
-                    st.info("Sem dados válidos (excluindo zeros)")
-            with col2:
-                st.markdown("#### 📈 Estatísticas - PMT 02")
-                pmt02_data_filtered = df_plot.loc[df_plot['Peneira'] == 'PMT 02', indicador_selecionado]
-                if not pmt02_data_filtered.empty:
-                    st.write(f"**Média:** {format_brazilian_number(pmt02_data_filtered.mean())}")
-                    st.write(f"**Mediana:** {format_brazilian_number(pmt02_data_filtered.median())}")
-                    st.write(f"**Desvio Padrão:** {format_brazilian_number(pmt02_data_filtered.std())}")
-                    st.write(f"**Mínimo:** {format_brazilian_number(pmt02_data_filtered.min())}")
-                    st.write(f"**Máximo:** {format_brazilian_number(pmt02_data_filtered.max())}")
-                else:
-                    st.info("Sem dados válidos (excluindo zeros)")
+            for col, pmt in [(col1, 'PMT 01'), (col2, 'PMT 02')]:
+                with col:
+                    st.markdown(f"#### 📈 Estatísticas - {pmt}")
+                    data = df_plot[df_plot['Peneira'] == pmt][ind_sel]
+                    if not data.empty:
+                        for stat, func in [('Média', 'mean'), ('Mediana', 'median'), ('Desvio Padrão', 'std'), ('Mínimo', 'min'), ('Máximo', 'max')]:
+                            st.write(f"**{stat}:** {fmt_num(getattr(data, func)())}")
+                    else: st.info("Sem dados válidos")
 
-# === ANÁLISE DE TENDÊNCIAS ===
+# ========== TENDÊNCIAS ==========
 st.markdown("---")
 st.subheader("📈 Análise de Tendências Temporais")
 
-if isinstance(df_boxplot, pd.DataFrame) and not df_boxplot.empty:
-    indicadores_disponiveis = ['Fe', 'SiO2', 'Al2O3', 'TMP', '>31_5mm', '<0_15mm']
-    indicador_tendencia = st.selectbox(
-        "📊 Selecione um Indicador para Análise de Tendência",
-        options=indicadores_disponiveis,
-        key="tendencia_selector"
-    )
-
-    if indicador_tendencia:
-        df_trend = df_boxplot.copy()
-        df_trend[indicador_tendencia] = pd.to_numeric(df_trend[indicador_tendencia], errors='coerce')
-        df_trend = df_trend.dropna(subset=[indicador_tendencia, 'Data'])
-        df_trend = df_trend[df_trend[indicador_tendencia] != 0]  # ignora zeros
-
+if isinstance(df_box, pd.DataFrame) and not df_box.empty:
+    ind_trend = st.selectbox("📊 Indicador para Tendência", INDICADORES, key="trend")
+    if ind_trend:
+        df_trend = df_box.copy()
+        df_trend[ind_trend] = pd.to_numeric(df_trend[ind_trend], errors='coerce')
+        df_trend = df_trend.dropna(subset=[ind_trend, 'Data'])[lambda x: x[ind_trend] != 0]
+        
         if not df_trend.empty:
-            mes_ref = st.session_state.get('mes_referencia', mes_referencia) or 'N/D'
-            fig_line = px.line(
-                df_trend.sort_values('Data'),
-                x='Data',
-                y=indicador_tendencia,
-                color='Peneira',
-                title=f"📈 Evolução Temporal de {indicador_tendencia} - {mes_ref}",
-                markers=True
-            )
-            fig_line.update_layout(
-                template='plotly_white',
-                font=dict(size=12),
-                title_font=dict(size=16),
-                height=400,
-                xaxis_title="Data",
-                yaxis_title=f"{indicador_tendencia} ({'%' if indicador_tendencia in ['Fe', 'SiO2', 'Al2O3', '>31_5mm', '<0_15mm'] else 'mm' if indicador_tendencia == 'TMP' else ''})",
-                yaxis=dict(zeroline=False)  # opcional
-            )
+            # Line chart
+            fig_line = px.line(df_trend.sort_values('Data'), x='Data', y=ind_trend, color='Peneira', 
+                             title=f"📈 Evolução de {ind_trend} - {mes_ref}", markers=True)
+            fig_line.update_layout(template='plotly_white', height=400)
             fig_line.update_yaxes(tickformat=',.2f')
             st.plotly_chart(fig_line, use_container_width=True)
-
-            # Análise de variabilidade recalculada usando as séries filtradas acima
+            
+            # Variability
             st.markdown("#### 🎯 Análise de Variabilidade")
             col1, col2 = st.columns(2)
-            pmt01_data_filtered = df_trend.loc[df_trend['Peneira'] == 'PMT 01', indicador_tendencia]
-            pmt02_data_filtered = df_trend.loc[df_trend['Peneira'] == 'PMT 02', indicador_tendencia]
+            for col, pmt in [(col1, 'PMT 01'), (col2, 'PMT 02')]:
+                with col:
+                    data = df_trend[df_trend['Peneira'] == pmt][ind_trend]
+                    if not data.empty and data.mean() != 0:
+                        cv = (data.std() / data.mean()) * 100
+                        st.metric(f"Coef. Variação - {pmt}", fmt_pct(cv))
+                    else: st.metric(f"Coef. Variação - {pmt}", "N/D")
 
-            with col1:
-                if not pmt01_data_filtered.empty and pmt01_data_filtered.mean() != 0:
-                    pmt01_cv = (pmt01_data_filtered.std() / pmt01_data_filtered.mean()) * 100
-                    st.metric("Coeficiente de Variação - PMT 01", format_percentage(pmt01_cv))
-                else:
-                    st.metric("Coeficiente de Variação - PMT 01", "N/D")
-
-            with col2:
-                if not pmt02_data_filtered.empty and pmt02_data_filtered.mean() != 0:
-                    pmt02_cv = (pmt02_data_filtered.std() / pmt02_data_filtered.mean()) * 100
-                    st.metric("Coeficiente de Variação - PMT 02", format_percentage(pmt02_cv))
-                else:
-                    st.metric("Coeficiente de Variação - PMT 02", "N/D")
-
-# === RODAPÉ ===
+# Footer
 st.markdown("---")
-st.markdown(
-    """
-    <div style='text-align: center; color: #666; font-size: 0.8em;'>
-        Dashboard de Qualidade - LHG Mining | Tupacery
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+st.markdown("<div style='text-align: center; color: #666; font-size: 0.8em;'>Dashboard de Qualidade - LHG Mining | Tupacery</div>", unsafe_allow_html=True)
