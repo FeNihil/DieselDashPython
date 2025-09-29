@@ -22,13 +22,13 @@ COLORS = {
     'sinter': '#005F73',    # Azul ardósia (antes: #5A99E2)
     'hematita': '#708090',  # Cinza ardósia (antes: #A9A9A9)
     
-    # Variações para PM01 (tons mais claros)
-    'lump_pm01_light': '#E87722',
-    'lump_pm01_lighter': '#F59E42',
+    # Variações para PM01 (contraste alto)
+    'lump_pm01_light': '#708090',    # Cinza ardósia (Hematita)
+    'lump_pm01_lighter': '#F59E42',  # Âmbar claro (Sinter)
     
-    # Variações para PM04 (tons mais claros)
-    'sinter_pm04_light': '#0A7C8F',
-    'sinter_pm04_lighter': '#1E96AA',
+    # Variações para PM04 (contraste alto)
+    'sinter_pm04_light': '#708090',  # Cinza ardósia (Hematita)
+    'sinter_pm04_lighter': '#1E96AA', # Azul claro (Sinter)
     
     # Cor de destaque para média móvel
     'highlight': '#10B981',  # Verde esmeralda (tendência positiva)
