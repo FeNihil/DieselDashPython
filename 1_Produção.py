@@ -17,6 +17,23 @@ def is_valid_xlsx(b):
     try: return zipfile.is_zipfile(io.BytesIO(b))
     except: return False
 
+COLORS = {
+    'lump': '#D97706',      # Âmbar profissional (antes: #f47c20)
+    'sinter': '#005F73',    # Azul ardósia (antes: #5A99E2)
+    'hematita': '#708090',  # Cinza ardósia (antes: #A9A9A9)
+    
+    # Variações para PM01 (tons mais claros)
+    'lump_pm01_light': '#E87722',
+    'lump_pm01_lighter': '#F59E42',
+    
+    # Variações para PM04 (tons mais claros)
+    'sinter_pm04_light': '#0A7C8F',
+    'sinter_pm04_lighter': '#1E96AA',
+    
+    # Cor de destaque para média móvel
+    'highlight': '#10B981',  # Verde esmeralda (tendência positiva)
+}
+
 # ========== CRYPTO ==========
 HEX_KEY_STRING = st.secrets.get("HEX_KEY_STRING")
 fernet = None
@@ -235,21 +252,29 @@ st.subheader("Atingimento de Metas Individuais no Período")
 def create_gauge(value, threshold, title, color):
     fig = go.Figure(go.Indicator(
         mode="gauge+number", value=value, title={'text': title},
-        gauge={'axis': {'range': [None, threshold * 1.1]}, 'threshold': {'line': {'color': color, 'width': 4}, 'thickness': 0.75, 'value': threshold}, 'bar': {'color': color}}
+        gauge={'axis': {'range': [None, threshold * 1.1]}, 
+               'threshold': {'line': {'color': color, 'width': 4}, 'thickness': 0.75, 'value': threshold}, 
+               'bar': {'color': color}}
     ))
     fig.update_layout(height=250, margin=dict(l=20, r=20, b=20, t=50), paper_bgcolor="rgba(0,0,0,0)", font={'color': "var(--text-color)"})
     return fig
 
 col1, col2 = st.columns(2)
-with col1: st.plotly_chart(create_gauge(prod_total_pm01, META_PM * max(1, dias_prod_pm01), "Meta Total PM 01", "#f47c20"), use_container_width=True)
-with col2: st.plotly_chart(create_gauge(prod_total_pm04, META_PM * max(1, dias_prod_pm04), "Meta Total PM 04", "#5A99E2"), use_container_width=True)
+with col1: st.plotly_chart(create_gauge(prod_total_pm01, META_PM * max(1, dias_prod_pm01), "Meta Total PM 01", COLORS['lump']), use_container_width=True)
+with col2: st.plotly_chart(create_gauge(prod_total_pm04, META_PM * max(1, dias_prod_pm04), "Meta Total PM 04", COLORS['sinter']), use_container_width=True)
 
 st.markdown("---")
 st.subheader("Evolução da Produção Diária Empilhada por Produto")
-fig_prod = px.bar(df_filt, x='data', y=['total_lump', 'total_sinter', 'total_hematita'], title="Produção Diária Empilhada (PM01 + PM04)",
+fig_prod = px.bar(df_filt, x='data', y=['total_lump', 'total_sinter', 'total_hematita'], 
+                  title="Produção Diária Empilhada (PM01 + PM04)",
                   labels={'value': 'Produção (t)', 'variable': 'Produto', 'data': 'Data'},
-                  color_discrete_map={'total_lump': '#f47c20', 'total_sinter': '#5A99E2', 'total_hematita': '#A9A9A9'})
-fig_prod.add_trace(go.Scatter(x=df_filt['data'], y=df_filt['media_movel_7d'], mode='lines', name='Média Móvel 7 Dias', line=dict(color='yellow', width=3)))
+                  color_discrete_map={
+                      'total_lump': COLORS['lump'], 
+                      'total_sinter': COLORS['sinter'], 
+                      'total_hematita': COLORS['hematita']
+                  })
+fig_prod.add_trace(go.Scatter(x=df_filt['data'], y=df_filt['media_movel_7d'], mode='lines', 
+                              name='Média Móvel 7 Dias', line=dict(color=COLORS['highlight'], width=3)))
 fig_prod.update_layout(template='plotly_dark')
 st.plotly_chart(fig_prod, use_container_width=True)
 
@@ -265,12 +290,12 @@ col1, col2 = st.columns(2)
 with col1:
     st.markdown("<h5 style='text-align: center;'>Mix de Produtos - PM 01</h5>", unsafe_allow_html=True)
     pm01_vals = [df_prod_filt.get(f'pm01_{p}', pd.Series(dtype=float)).sum() for p in ['lump', 'hematita', 'sinter']]
-    st.plotly_chart(create_pie(pm01_vals, "PM 01", ['#f47c20', '#ff9a51', '#ffb885']), use_container_width=True)
+    st.plotly_chart(create_pie(pm01_vals, "PM 01", [COLORS['lump'], COLORS['lump_pm01_light'], COLORS['lump_pm01_lighter']]), use_container_width=True)
 
 with col2:
     st.markdown("<h5 style='text-align: center;'>Mix de Produtos - PM 04</h5>", unsafe_allow_html=True)
     pm04_vals = [df_prod_filt.get(f'pm04_{p}', pd.Series(dtype=float)).sum() for p in ['lump', 'hematita', 'sinter']]
-    st.plotly_chart(create_pie(pm04_vals, "PM 04", ['#5A99E2', '#87B5ED', '#B4D1F5']), use_container_width=True)
+    st.plotly_chart(create_pie(pm04_vals, "PM 04", [COLORS['sinter'], COLORS['sinter_pm04_light'], COLORS['sinter_pm04_lighter']]), use_container_width=True)
 
 # ========== DETAILED STATS ==========
 with st.expander("Clique para ver Estatísticas Detalhadas da Produção"):
